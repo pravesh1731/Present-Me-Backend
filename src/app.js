@@ -23,7 +23,7 @@ const notice = require("./routes/teacher/notice");
 // Middleware
 app.use(cors(
   {
-    origin: ['http://localhost:5173', 'http://localhost:5174'],
+    origin: ['http://localhost:5173', 'http://localhost:5174','https://www.presentme.in','https://presentme.in', ],
     credentials: true,
   }
 ));
@@ -32,19 +32,19 @@ app.use(express.urlencoded({ limit: '200mb', extended: true }));
 app.use(cookieParser());
 
 
-app.use("/api", authRouter);
-app.use("/api", dashboardrouter);
-app.use("/api", sAdminRouter);
-app.use("/api", sAdminAuth);
-app.use("/api", studentAuth);
-app.use("/api", teacherAuth);
-app.use("/api", studentProfile);
-app.use("/api", adminRouter);
-app.use("/api", teacherProfile);
-app.use("/api", teacherClass);
-app.use("/api", studentClass);
-app.use("/api", attendance);
-app.use("/api", notice);
+app.use("/", authRouter);
+app.use("/", dashboardrouter);
+app.use("/", sAdminRouter);
+app.use("/", sAdminAuth);
+app.use("/", studentAuth);
+app.use("/", teacherAuth);
+app.use("/", studentProfile);
+app.use("/", adminRouter);
+app.use("/", teacherProfile);
+app.use("/", teacherClass);
+app.use("/", studentClass);
+app.use("/", attendance);
+app.use("/", notice);
 
 // Mount routes
 // app.use('/api/institutions', institutionRoutes);
