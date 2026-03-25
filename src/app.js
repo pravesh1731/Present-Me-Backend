@@ -50,7 +50,7 @@ app.use("/", notice);
 // app.use('/api/institutions', institutionRoutes);
 
 // Example root
-app.get("/", (req, res) => res.send("PresentMe back running"));
+app.get("/", (req, res) => res.send("Present-Me back running"));
 
 // Start server
 const PORT = process.env.PORT || 3000;
