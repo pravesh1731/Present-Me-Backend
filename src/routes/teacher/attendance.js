@@ -1,6 +1,6 @@
 
 const express = require("express");
-const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+const { DynamoDBClient, ScanCommand } = require("@aws-sdk/client-dynamodb");
 const { DynamoDBDocumentClient, PutCommand, QueryCommand, GetCommand, UpdateCommand } = require("@aws-sdk/lib-dynamodb");
 const tAuth = require("../../middlewares/teacherAuth");
 const studAuth = require("../../middlewares/student_auth");

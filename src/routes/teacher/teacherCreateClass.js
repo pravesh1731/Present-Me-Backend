@@ -144,6 +144,37 @@ teacherClass.get("/teachers/class", tAuth, async (req, res) => {
   }
 });
 
+teacherClass.get("/teachers/total-students", tAuth, async (req, res) => {
+  const teacherId = req.teacherId.teacherId;
+
+  if (!teacherId) {
+    return res.status(400).json({ message: "Teacher not found" });
+  }
+
+  try {
+    const result = await getClassesByTeacher(teacherId);
+
+    const classes = result.classes || []; // ✅ FIX
+
+    const totalStudents = classes.reduce((sum, cls) => {
+      return sum + (Array.isArray(cls.students) ? cls.students.length : 0);
+    }, 0);
+
+    return res.status(200).json({
+      success: true,
+      totalStudents,
+    });
+
+  } catch (err) {
+    console.error("❌ ERROR:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: err.message,
+    });
+  }
+});
 
 teacherClass.patch("/teachers/handle-student-request", tAuth, async (req, res) => {
   try {
