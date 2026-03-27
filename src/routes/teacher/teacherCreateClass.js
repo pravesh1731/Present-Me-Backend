@@ -384,4 +384,90 @@ teacherClass.get("/teachers/class/:classCode/joinedStudentsList", tAuth, async (
   }
 });
 
+teacherClass.get("/teachers/class/:classCode/averageAttendance", tAuth, async (req, res) => {
+  try {
+    const { classCode } = req.params;
+    const teacherId = req.teacherId.teacherId;
+
+    if (!classCode) {
+      return res.status(400).json({ message: "Class code is required" });
+    }
+
+    // Verify class belongs to this teacher
+    const classData = await client.send(new GetCommand({
+      TableName: TABLE_NAME,
+      Key: { classCode }
+    }));
+
+    if (!classData.Item) {
+      return res.status(404).json({ message: "Class not found" });
+    }
+
+    if (classData.Item.createdBy !== teacherId) {
+      return res.status(403).json({ message: "Unauthorized access" });
+    }
+
+    // ✅ Query all attendance records for this class
+    const { QueryCommand } = require("@aws-sdk/lib-dynamodb");
+
+    const attendanceData = await client.send(new QueryCommand({
+      TableName: "attendance",
+      KeyConditionExpression: "classCode = :classCode",
+      ExpressionAttributeValues: {
+        ":classCode": classCode
+      }
+    }));
+
+    const allDateRecords = attendanceData.Items || [];
+
+    if (allDateRecords.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          classCode,
+          totalClasses: 0,
+          averageAttendance: 0.0,
+          totalStudents: 0,
+        }
+      });
+    }
+
+    // ✅ Compute average attendance across all dates
+    // Average = sum of (present students / total students per day) / total days
+    let totalPercentageSum = 0;
+    let validDays = 0;
+
+    allDateRecords.forEach((record) => {
+      const dailyAttendance = record.attendance || [];
+      if (dailyAttendance.length === 0) return;
+
+      const presentCount = dailyAttendance.filter(a => a.status === 1).length;
+      const totalCount = dailyAttendance.length;
+
+      totalPercentageSum += (presentCount / totalCount) * 100;
+      validDays++;
+    });
+
+    const averageAttendance = validDays > 0
+      ? parseFloat((totalPercentageSum / validDays).toFixed(1))
+      : 0.0;
+
+    const totalStudents = classData.Item.students?.length || 0;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        classCode,
+        totalClasses: validDays,
+        totalStudents,
+        averageAttendance, // e.g. 85.5 means 85.5% avg attendance
+      }
+    });
+
+  } catch (error) {
+    console.error("Error fetching average attendance", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 module.exports = teacherClass;
