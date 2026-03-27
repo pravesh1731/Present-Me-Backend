@@ -309,21 +309,79 @@ teacherClass.get("/teachers/class/:classCode/joinedStudentsList", tAuth, async (
     }
 
     const students = classData.Item.students || [];
-    //get student details for each studentId in students array
+
+    // ✅ Query all attendance records for this classCode (all dates)
+    const { QueryCommand } = require("@aws-sdk/lib-dynamodb");
+
+    const attendanceData = await client.send(new QueryCommand({
+      TableName: "attendance",
+      KeyConditionExpression: "classCode = :classCode",
+      ExpressionAttributeValues: {
+        ":classCode": classCode
+      }
+    }));
+
+    const allDateRecords = attendanceData.Items || [];
+    // allDateRecords shape:
+    // [
+    //   { classCode, date: "2026-03-19", attendance: [{ studentId, status }] },
+    //   { classCode, date: "2026-03-22", attendance: [{ studentId, status }] },
+    // ]
+
+    // ✅ Build Map<studentId, { present, total }> from all date records
+    const studentAttendanceMap = {};
+
+    allDateRecords.forEach((record) => {
+      const dailyAttendance = record.attendance || [];
+      dailyAttendance.forEach(({ studentId, status }) => {
+        if (!studentAttendanceMap[studentId]) {
+          studentAttendanceMap[studentId] = { present: 0, total: 0 };
+        }
+        studentAttendanceMap[studentId].total += 1;
+        if (status === 1) {
+          studentAttendanceMap[studentId].present += 1;
+        }
+      });
+    });
+
+    // ✅ Fetch student details + attach attendance summary
     const studentDetails = await Promise.all(students.map(async (studentId) => {
-      //fetch student details from students table using studentId
       const studentData = await client.send(new GetCommand({
         TableName: "students",
         Key: { studentId }
       }));
-      return studentData.Item;
+
+      const student = studentData.Item;
+      if (!student) return null;
+
+      const stats = studentAttendanceMap[studentId] || { present: 0, total: 0 };
+      const absent = stats.total - stats.present;
+      const percentage = stats.total > 0
+        ? parseFloat(((stats.present / stats.total) * 100).toFixed(1))
+        : 0.0;
+
+      return {
+        ...student,
+        attendance: {
+          totalClasses: stats.total,
+          present: stats.present,
+          absent,
+          percentage,
+        }
+      };
     }));
-    return res.status(200).json({ students: studentDetails });
+
+    const validStudents = studentDetails.filter(Boolean);
+
+    return res.status(200).json({
+      success: true,
+      students: validStudents
+    });
+
   } catch (error) {
     console.error("Error fetching students", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 });
-
 
 module.exports = teacherClass;
