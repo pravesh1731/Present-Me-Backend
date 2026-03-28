@@ -179,6 +179,7 @@ async function updateClassName(
 
 async function getClassesByTeacher(teacherId) {
   try {
+    // ✅ Step 1 — fetch all classes for this teacher
     const scanCmd = new ScanCommand({
       TableName: "classes",
       FilterExpression: "createdBy = :teacherId",
@@ -188,11 +189,76 @@ async function getClassesByTeacher(teacherId) {
     });
 
     const result = await docClient.send(scanCmd);
+    const classes = result.Items || [];
+
+    if (classes.length === 0) {
+      return { success: true, classes: [] };
+    }
+
+    // ✅ Step 2 — for each class, query attendance table
+    const classesWithStats = await Promise.all(
+      classes.map(async (cls) => {
+        try {
+          const attendanceData = await docClient.send(new QueryCommand({
+            TableName: "attendance",
+            KeyConditionExpression: "classCode = :classCode",
+            ExpressionAttributeValues: {
+              ":classCode": cls.classCode,
+            },
+          }));
+
+          const allDateRecords = attendanceData.Items || [];
+
+          // ✅ Total classes = number of date records
+          const totalClasses = allDateRecords.length;
+
+          // ✅ Total students = from class item
+          const totalStudents = cls.students?.length || 0;
+
+          // ✅ Average attendance across all days
+          let totalPercentageSum = 0;
+          let validDays = 0;
+
+          allDateRecords.forEach((record) => {
+            const dailyAttendance = record.attendance || [];
+            if (dailyAttendance.length === 0) return;
+
+            const presentCount = dailyAttendance.filter(a => a.status === 1).length;
+            const totalCount = dailyAttendance.length;
+
+            totalPercentageSum += (presentCount / totalCount) * 100;
+            validDays++;
+          });
+
+          const averageAttendance = validDays > 0
+            ? parseFloat((totalPercentageSum / validDays).toFixed(1))
+            : 0.0;
+
+          return {
+            ...cls,
+            totalClasses,
+            totalStudents,
+            averageAttendance,
+          };
+
+        } catch (err) {
+          // ✅ If attendance fetch fails for one class, don't break the whole list
+          console.error(`Error fetching attendance for class ${cls.classCode}:`, err);
+          return {
+            ...cls,
+            totalClasses: 0,
+            totalStudents: cls.students?.length || 0,
+            averageAttendance: 0.0,
+          };
+        }
+      })
+    );
 
     return {
       success: true,
-      classes: result.Items || [],
+      classes: classesWithStats,
     };
+
   } catch (err) {
     console.error(err);
     throw err;
