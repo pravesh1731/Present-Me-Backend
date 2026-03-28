@@ -153,21 +153,48 @@ teacherClass.get("/teachers/total-students", tAuth, async (req, res) => {
 
   try {
     const result = await getClassesByTeacher(teacherId);
+    const classes = result.classes || [];
 
-    const classes = result.classes || []; // ✅ FIX
+    if (classes.length === 0) {
+      return res.status(200).json({
+        success: true,
+        totalStudents: 0,
+        totalClasses: 0,
+        averageAttendance: 0.0,
+      });
+    }
 
+    // ✅ Count all enrollments across all classes (duplicates included)
     const totalStudents = classes.reduce((sum, cls) => {
-      return sum + (Array.isArray(cls.students) ? cls.students.length : 0);
+      return sum + (cls.students?.length || 0);
     }, 0);
+
+    // ✅ Total sessions held across all classes
+    const totalClasses = classes.reduce((sum, cls) => {
+      return sum + (cls.totalClasses || 0);
+    }, 0);
+
+    // ✅ Simple average of all class averages (equal weight per class)
+    const classesWithSessions = classes.filter(cls => cls.totalClasses > 0);
+
+    const averageAttendance = classesWithSessions.length > 0
+      ? parseFloat(
+          (
+            classesWithSessions.reduce((sum, cls) => sum + (cls.averageAttendance || 0), 0)
+            / classesWithSessions.length
+          ).toFixed(1)
+        )
+      : 0.0;
 
     return res.status(200).json({
       success: true,
-      totalStudents,
+      totalStudents,   // e.g. student in 2 classes = counted twice
+      totalClasses,    // total sessions held across all classes
+      averageAttendance, // e.g. (87.5 + 91.0 + 76.0) / 3 = 84.8
     });
 
   } catch (err) {
-    console.error("❌ ERROR:", err);
-
+    console.error("Error:", err);
     return res.status(500).json({
       success: false,
       message: "Internal server error",
