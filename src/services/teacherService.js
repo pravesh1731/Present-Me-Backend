@@ -85,6 +85,7 @@ async function createClass({
       createdBy,
       joinRequests: [],
       students: [],
+      isActive: true,
       createdAt: new Date().toISOString(),
     };
 

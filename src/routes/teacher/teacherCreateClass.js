@@ -52,6 +52,48 @@ teacherClass.post("/teachers/class", tAuth, async (req, res) => {
   }
 });
 
+teacherClass.patch("/teachers/class/:classCode/toggleStatus", tAuth, async (req, res) => {
+  try {
+    const { classCode } = req.params;
+    const teacherId = req.teacherId.teacherId;
+
+    // verify ownership
+    const classData = await client.send(new GetCommand({
+      TableName: TABLE_NAME,
+      Key: { classCode }
+    }));
+
+    if (!classData.Item) {
+      return res.status(404).json({ message: "Class not found" });
+    }
+
+    if (classData.Item.createdBy !== teacherId) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const newStatus = !classData.Item.isActive; // ✅ toggle
+
+    await client.send(new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: { classCode },
+      UpdateExpression: "SET isActive = :isActive",
+      ExpressionAttributeValues: {
+        ":isActive": newStatus,
+      }
+    }));
+
+    return res.status(200).json({
+      success: true,
+      isActive: newStatus,
+      message: newStatus ? "Class activated" : "Class moved to inactive",
+    });
+
+  } catch (error) {
+    console.error("Error toggling class status:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 teacherClass.delete("/teachers/class/:classCode", tAuth, async (req, res) => {
   try {
     const { classCode } = req.params;
