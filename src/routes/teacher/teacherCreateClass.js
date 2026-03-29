@@ -196,8 +196,9 @@ teacherClass.get("/teachers/total-students", tAuth, async (req, res) => {
   try {
     const result = await getClassesByTeacher(teacherId);
     const classes = result.classes || [];
+    const activeClasses = classes.filter(cls => cls.isActive === true);
 
-    if (classes.length === 0) {
+    if (activeClasses.length === 0) {
       return res.status(200).json({
         success: true,
         totalStudents: 0,
@@ -207,17 +208,17 @@ teacherClass.get("/teachers/total-students", tAuth, async (req, res) => {
     }
 
     // ✅ Count all enrollments across all classes (duplicates included)
-    const totalStudents = classes.reduce((sum, cls) => {
+    const totalStudents = activeClasses.reduce((sum, cls) => {
       return sum + (cls.students?.length || 0);
     }, 0);
 
     // ✅ Total sessions held across all classes
-    const totalClasses = classes.reduce((sum, cls) => {
+    const totalClasses = activeClasses.reduce((sum, cls) => {
       return sum + (cls.totalClasses || 0);
     }, 0);
 
     // ✅ Simple average of all class averages (equal weight per class)
-    const classesWithSessions = classes.filter(cls => cls.totalClasses > 0);
+    const classesWithSessions = activeClasses.filter(cls => cls.totalClasses > 0);
 
     const averageAttendance = classesWithSessions.length > 0
       ? parseFloat(
