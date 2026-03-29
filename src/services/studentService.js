@@ -124,21 +124,20 @@ async function getStudentJoinRequests(studentId){
   }
 }
 
-async function getStudentEnrollClasses(studentId){
-  try{ 
-    const scanParams={
-      TableName:"classes",
-      ProjectionExpression:"classCode,className,createdBy, roomNo, classDays, startTime, endTime, students",
+async function getStudentEnrollClasses(studentId) {
+  try {
+    const scanParams = {
+      TableName: "classes",
+      // ✅ add isActive to projection
+      ProjectionExpression: "classCode, className, createdBy, roomNo, classDays, startTime, endTime, students, isActive",
     };
 
-    const result= await docClient.send(new ScanCommand(scanParams));
+    const result = await docClient.send(new ScanCommand(scanParams));
 
-    // 1️⃣ Filter enrolled classes
     const enrolledClasses = result.Items.filter(
       (cls) => Array.isArray(cls.students) && cls.students.includes(studentId)
     );
 
-    // Attach teacher name
     const requestedClasses = await Promise.all(
       enrolledClasses.map(async (cls) => {
         const teacher = await getTeacherById(cls.createdBy);
@@ -152,14 +151,14 @@ async function getStudentEnrollClasses(studentId){
           roomNo: cls.roomNo,
           teacherId: cls.createdBy,
           teacherName: teacher ? `${teacher.firstName} ${teacher.lastName}` : "Unknown",
+          isActive: cls.isActive ?? true,  // ✅ add this
         };
       })
     );
-    
 
     return requestedClasses;
 
-  }catch(err){
+  } catch (err) {
     throw new Error("Failed to get join requests: " + err.message);
   }
 }
