@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const studAuth = require("../../middlewares/student_auth");
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, GetCommand, PutCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, PutCommand,ScanCommand } = require('@aws-sdk/lib-dynamodb');
 
 const notes = express.Router();
 
@@ -47,8 +47,8 @@ const upload = multer({
 
 notes.post(
   '/students/notes/upload',
-  studAuth,           // your existing auth middleware
-  upload.single('file'), // field name must be 'file' from Flutter
+  studAuth,
+  upload.single('file'),
   async (req, res) => {
     try {
       const studentId = req.student.studentId;
@@ -65,12 +65,11 @@ notes.post(
         return res.status(400).json({ message: 'Missing required fields' });
       }
 
-      // Teacher name required only for Notes
       if (type === 'Notes' && !teacherName) {
         return res.status(400).json({ message: 'Teacher name is required for Notes' });
       }
 
-      // ── 3. Fetch student from DynamoDB to get institutionId ──
+      // ── 3. Fetch student to get institutionId ──
       const studentResult = await dynamo.send(new GetCommand({
         TableName: 'students',
         Key: { studentId },
@@ -82,30 +81,65 @@ notes.post(
 
       const institutionId = studentResult.Item.institutionId;
 
-     // ── 4. Upload file to S3 ──
-const fileExt = req.file.originalname.split('.').pop();
-const fileKey = `study-materials/${institutionId}/${studentId}-${Date.now()}.${fileExt}`;
-//               ^^^^^^^^^^^^^^^^ new folder/section in the same bucket
+      // ── 3.5 ✅ Duplicate check ──
+      const duplicateCheck = await dynamo.send(new ScanCommand({
+        TableName: 'notes',
+        FilterExpression: `
+          institutionId = :iid AND
+          #type = :type AND
+          semester = :semester AND
+          #year = :year AND
+          course = :course AND
+          department = :department 
+        `,
+        ExpressionAttributeNames: {
+          '#type': 'type',
+          '#year': 'year',
+        },
+        ExpressionAttributeValues: {
+          ':iid':        institutionId,
+          ':type':       type,
+          ':semester':   semester,
+          ':year':       year,
+          ':course':     course,
+          ':department': department,
+          
+        },
+        Limit: 1,
+      }));
 
-await s3.send(new PutObjectCommand({
-  Bucket:      'presentme-document',
-  Key:         fileKey,
-  Body:        req.file.buffer,
-  ContentType: req.file.mimetype,
-}));
+      // ✅ If a match found — return 409 warning
+      if (duplicateCheck.Items && duplicateCheck.Items.length > 0) {
+        return res.status(409).json({
+          success: false,
+          isDuplicate: true,
+          message: 'This file already exists. A note with the same file name, type, semester, year, course and department has already been uploaded.',
+        });
+      }
 
-const fileUrl = `https://presentme-document.s3.ap-south-1.amazonaws.com/${fileKey}`;
+      // ── 4. Upload file to S3 ──
+      const fileExt = req.file.originalname.split('.').pop();
+      const fileKey = `study-materials/${institutionId}/${studentId}-${Date.now()}.${fileExt}`;
 
-      // ── 5. Save record to DynamoDB ──
+      await s3.send(new PutObjectCommand({
+        Bucket:      'presentme-document',
+        Key:         fileKey,
+        Body:        req.file.buffer,
+        ContentType: req.file.mimetype,
+      }));
+
+      const fileUrl = `https://presentme-document.s3.ap-south-1.amazonaws.com/${fileKey}`;
+
+      // ── 5. Save to DynamoDB ──
       const noteId    = `note-${uuidv4()}`;
       const createdAt = new Date().toISOString();
 
       const noteItem = {
-        noteId,                                               // PK
-        institutionId,                                        // from DB lookup
-        uploadedBy:  studentId,                               // from JWT
-        status:      'pending',                               // default
-        type,                                                 // 'Notes' | 'PYQ'
+        noteId,
+        institutionId,
+        uploadedBy:  studentId,
+        status:      'pending',
+        type,
         semester,
         year,
         course,
@@ -113,18 +147,18 @@ const fileUrl = `https://presentme-document.s3.ap-south-1.amazonaws.com/${fileKe
         teacherName: type === 'Notes' ? teacherName : null,
         fileName:    req.file.originalname,
         fileUrl,
-        fileKey,                                              // useful for deletion later
+        fileKey,
         downloads:   0,
         createdAt,
       };
 
       await dynamo.send(new PutCommand({
-        TableName: 'notes',                                   // 🔁 replace with your table name
+        TableName: 'notes',
         Item: noteItem,
       }));
 
       // ── 6. Respond ──
-      res.status(201).json({
+      return res.status(201).json({
         message: 'Uploaded successfully. Pending approval.',
         noteId,
         fileUrl,
@@ -138,7 +172,7 @@ const fileUrl = `https://presentme-document.s3.ap-south-1.amazonaws.com/${fileKe
         return res.status(400).json({ message: error.message });
       }
 
-      res.status(500).json({ message: 'Failed to upload note' });
+      return res.status(500).json({ message: 'Failed to upload note' });
     }
   }
 );
