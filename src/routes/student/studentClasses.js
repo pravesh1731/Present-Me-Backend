@@ -177,15 +177,31 @@ studentClass.get("/students/attendance-overall", studAuth, async (req, res) => {
       return res.status(400).json({ message: "Student ID is required" });
     }
 
-    // ✅ Step 1 — Get all classes the student is enrolled in
+    // ✅ Get last 6 months keys
+    const getLast6Months = () => {
+      const months = [];
+      const now = new Date();
+
+      for (let i = 0; i < 6; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        months.push(key);
+      }
+
+      return months;
+    };
+
+    const last6Months = getLast6Months();
+
+    // ================= STEP 1 — ACTIVE CLASSES =================
     const enrollmentData = await docClient.send(new ScanCommand({
-  TableName: "classes",
-  FilterExpression: "contains(students, :sid) AND isActive = :active",
-  ExpressionAttributeValues: {
-    ":sid": studentId,
-    ":active": true
-  }
-}));
+      TableName: "classes",
+      FilterExpression: "contains(students, :sid) AND isActive = :active",
+      ExpressionAttributeValues: {
+        ":sid": studentId,
+        ":active": true
+      }
+    }));
 
     const enrolledClasses = enrollmentData.Items || [];
 
@@ -197,14 +213,17 @@ studentClass.get("/students/attendance-overall", studAuth, async (req, res) => {
         overallAbsent: 0,
         overallTotalClasses: 0,
         overallAttendancePercentage: 0,
-        classSummaries: []
+        classSummaries: [],
+        monthlySummary: []
       });
     }
 
-    // ✅ Step 2 — For each class query attendance and compute stats
+    // ================= STEP 2 — PROCESS =================
     let overallPresent = 0;
     let overallAbsent = 0;
+
     const classSummaries = [];
+    const monthlyStats = {}; // 🔥 NEW
 
     for (const enrolledClass of enrolledClasses) {
       const classCode = enrolledClass.classCode;
@@ -223,6 +242,18 @@ studentClass.get("/students/attendance-overall", studAuth, async (req, res) => {
       let classAbsent = 0;
 
       for (const record of records) {
+        // ⚠️ Ensure your DB has record.date
+        const date = new Date(record.date);
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+        // ❌ Skip if not in last 6 months
+        if (!last6Months.includes(monthKey)) continue;
+
+        // init month
+        if (!monthlyStats[monthKey]) {
+          monthlyStats[monthKey] = { present: 0, absent: 0 };
+        }
+
         const attendanceList = Array.isArray(record.attendance)
           ? record.attendance
           : Object.values(record.attendance || {});
@@ -234,12 +265,18 @@ studentClass.get("/students/attendance-overall", studAuth, async (req, res) => {
             ? parseInt(student.status)
             : student.status;
 
-          if (status === 1) classPresent++;
-          else if (status === 0) classAbsent++;
+          if (status === 1) {
+            classPresent++;
+            monthlyStats[monthKey].present++;
+          } else if (status === 0) {
+            classAbsent++;
+            monthlyStats[monthKey].absent++;
+          }
         }
       }
 
       const classTotalClasses = classPresent + classAbsent;
+
       const attendancePercentage = classTotalClasses > 0
         ? parseFloat(((classPresent / classTotalClasses) * 100).toFixed(1))
         : 0.0;
@@ -257,7 +294,28 @@ studentClass.get("/students/attendance-overall", studAuth, async (req, res) => {
       });
     }
 
+    // ================= STEP 3 — MONTHLY SUMMARY =================
+    const monthlySummary = last6Months.map(month => {
+      const data = monthlyStats[month] || { present: 0, absent: 0 };
+
+      const total = data.present + data.absent;
+
+      const percentage = total > 0
+        ? parseFloat(((data.present / total) * 100).toFixed(1))
+        : 0;
+
+      return {
+        month,
+        present: data.present,
+        absent: data.absent,
+        totalClasses: total,
+        attendancePercentage: percentage
+      };
+    });
+
+    // ================= FINAL =================
     const overallTotalClasses = overallPresent + overallAbsent;
+
     const overallAttendancePercentage = overallTotalClasses > 0
       ? parseFloat(((overallPresent / overallTotalClasses) * 100).toFixed(1))
       : 0.0;
@@ -269,7 +327,8 @@ studentClass.get("/students/attendance-overall", studAuth, async (req, res) => {
       overallAbsent,
       overallTotalClasses,
       overallAttendancePercentage,
-      classSummaries
+      classSummaries,
+      monthlySummary // 🔥 NEW FIELD
     });
 
   } catch (error) {
