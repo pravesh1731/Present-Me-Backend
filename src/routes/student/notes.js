@@ -177,4 +177,65 @@ notes.post(
   }
 );
 
+notes.get('/students/notes', studAuth, async (req, res) => {
+  try {
+    const studentId = req.student.studentId;
+
+    const { course, department, semester, type } = req.query;
+
+    if (!course || !department || !semester || !type) {
+      return res.status(400).json({
+        message: 'course, department, semester and type are required',
+      });
+    }
+
+    // ── Get student ──
+    const studentResult = await dynamo.send(new GetCommand({
+      TableName: 'students',
+      Key: { studentId },
+    }));
+
+    if (!studentResult.Item) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    const institutionId = studentResult.Item.institutionId;
+
+    // ── Fetch notes ──
+    const result = await dynamo.send(new ScanCommand({
+      TableName: 'notes',
+      FilterExpression: `
+        institutionId = :iid AND
+        course = :course AND
+        department = :department AND
+        semester = :semester AND
+        #type = :type AND
+        #status = :status
+      `,
+      ExpressionAttributeNames: {
+        '#type': 'type',
+        '#status': 'status',
+      },
+      ExpressionAttributeValues: {
+        ':iid': institutionId,
+        ':course': course,
+        ':department': department,
+        ':semester': semester,
+        ':type': type,              // ✅ NEW FILTER
+        ':status': 'approved',
+      },
+    }));
+
+    return res.status(200).json({
+      success: true,
+      count: result.Items.length,
+      data: result.Items,
+    });
+
+  } catch (error) {
+    console.error('Fetch notes error:', error);
+    return res.status(500).json({ message: 'Failed to fetch notes' });
+  }
+});
+
 module.exports = notes;
