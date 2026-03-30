@@ -6,9 +6,10 @@ const {
   getStudentEnrollClasses,
   
 } = require("../../services/studentService");
-const { GetCommand, UpdateCommand } = require("@aws-sdk/lib-dynamodb");
+const { GetCommand, UpdateCommand, ScanCommand,QueryCommand } = require("@aws-sdk/lib-dynamodb");
 const studentClass = express.Router();
 const { docClient } = require("../../dynamoDb");
+
 
 
 const TABLE_NAME = "classes";
@@ -165,6 +166,114 @@ studentClass.patch("/students/leaveClass", studAuth, async (req, res) => {
   } catch (error) {
     console.error("Error leaving class:", error);
     return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+studentClass.get("/students/attendance-overall", studAuth, async (req, res) => {
+  try {
+    const studentId = req.student?.studentId;
+
+    if (!studentId) {
+      return res.status(400).json({ message: "Student ID is required" });
+    }
+
+    // ✅ Step 1 — Get all classes the student is enrolled in
+    const enrollmentData = await docClient.send(new ScanCommand({
+      TableName: "classes",
+      FilterExpression: "contains(students, :sid)",
+      ExpressionAttributeValues: {
+        ":sid": studentId
+      }
+    }));
+
+    const enrolledClasses = enrollmentData.Items || [];
+
+    if (enrolledClasses.length === 0) {
+      return res.status(200).json({
+        success: true,
+        totalClassesJoined: 0,
+        overallPresent: 0,
+        overallAbsent: 0,
+        overallTotalClasses: 0,
+        overallAttendancePercentage: 0,
+        classSummaries: []
+      });
+    }
+
+    // ✅ Step 2 — For each class query attendance and compute stats
+    let overallPresent = 0;
+    let overallAbsent = 0;
+    const classSummaries = [];
+
+    for (const enrolledClass of enrolledClasses) {
+      const classCode = enrolledClass.classCode;
+
+      const attendanceData = await docClient.send(new QueryCommand({
+        TableName: "attendance",
+        KeyConditionExpression: "classCode = :c",
+        ExpressionAttributeValues: {
+          ":c": classCode
+        }
+      }));
+
+      const records = attendanceData.Items || [];
+
+      let classPresent = 0;
+      let classAbsent = 0;
+
+      for (const record of records) {
+        const attendanceList = Array.isArray(record.attendance)
+          ? record.attendance
+          : Object.values(record.attendance || {});
+
+        const student = attendanceList.find(s => s.studentId === studentId);
+
+        if (student) {
+          const status = typeof student.status === "string"
+            ? parseInt(student.status)
+            : student.status;
+
+          if (status === 1) classPresent++;
+          else if (status === 0) classAbsent++;
+        }
+      }
+
+      const classTotalClasses = classPresent + classAbsent;
+      const attendancePercentage = classTotalClasses > 0
+        ? parseFloat(((classPresent / classTotalClasses) * 100).toFixed(1))
+        : 0.0;
+
+      overallPresent += classPresent;
+      overallAbsent += classAbsent;
+
+      classSummaries.push({
+        classCode,
+        className: enrolledClass.className ?? "Unknown",
+        totalPresent: classPresent,
+        totalAbsent: classAbsent,
+        totalClasses: classTotalClasses,
+        attendancePercentage
+      });
+    }
+
+    const overallTotalClasses = overallPresent + overallAbsent;
+    const overallAttendancePercentage = overallTotalClasses > 0
+      ? parseFloat(((overallPresent / overallTotalClasses) * 100).toFixed(1))
+      : 0.0;
+
+    return res.status(200).json({
+      success: true,
+      totalClassesJoined: enrolledClasses.length,
+      overallPresent,
+      overallAbsent,
+      overallTotalClasses,
+      overallAttendancePercentage,
+      classSummaries
+    });
+
+  } catch (error) {
+    console.error("Error fetching overall attendance:", error);
+    return res.status(500).json({ message: "Error fetching overall attendance" });
   }
 });
 
