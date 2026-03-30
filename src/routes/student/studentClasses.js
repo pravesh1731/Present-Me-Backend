@@ -179,12 +179,13 @@ studentClass.get("/students/attendance-overall", studAuth, async (req, res) => {
 
     // ✅ Step 1 — Get all classes the student is enrolled in
     const enrollmentData = await docClient.send(new ScanCommand({
-      TableName: "classes",
-      FilterExpression: "contains(students, :sid)",
-      ExpressionAttributeValues: {
-        ":sid": studentId
-      }
-    }));
+  TableName: "classes",
+  FilterExpression: "contains(students, :sid) AND isActive = :active",
+  ExpressionAttributeValues: {
+    ":sid": studentId,
+    ":active": true
+  }
+}));
 
     const enrolledClasses = enrollmentData.Items || [];
 
