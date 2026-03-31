@@ -2,11 +2,14 @@ const express = require('express');
 const multer = require('multer');
 const { v4: uuidv4 } = require('uuid');
 const studAuth = require("../../middlewares/student_auth");
+const tAuth = require("../../middlewares/teacherAuth");
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, GetCommand, PutCommand,ScanCommand,UpdateCommand,QueryCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, PutCommand,ScanCommand,UpdateCommand,QueryCommand, } = require('@aws-sdk/lib-dynamodb');
 
 const notes = express.Router();
+
+
 
 // ═══════════════════════════════════════════════════════════
 //  CLIENTS
@@ -21,6 +24,7 @@ const dynamo = DynamoDBDocumentClient.from(
 // ═══════════════════════════════════════════════════════════
 //  MULTER — memory storage (no disk write)
 // ═══════════════════════════════════════════════════════════
+
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -45,9 +49,20 @@ const upload = multer({
 //  POST /students/notes/upload
 // ═══════════════════════════════════════════════════════════
 
+
+const anyAuth = (req, res, next) => {
+  studAuth(req, res, (err) => {
+    if (!err && (req.student || req.user)) return next(); // student passed
+    tAuth(req, res, (err2) => {
+      if (!err2 && (req.teacher || req.user)) return next(); // teacher passed
+      return res.status(401).json({ message: 'Unauthorized' });
+    });
+  });
+};
+
 notes.post(
   '/students/notes/upload',
-  studAuth,
+  anyAuth,
   upload.single('file'),
   async (req, res) => {
     try {
@@ -177,7 +192,7 @@ notes.post(
   }
 );
 
-notes.get('/students/notes', studAuth, async (req, res) => {
+notes.get('/students/notes', anyAuth, async (req, res) => {
   try {
     const studentId = req.student.studentId;
 
@@ -239,7 +254,7 @@ notes.get('/students/notes', studAuth, async (req, res) => {
 });
 
 notes.patch('/students/notes/:noteId/download',
-  studAuth,
+  anyAuth,
   async (req, res) => {
     try {
       const { noteId } = req.params;
@@ -262,7 +277,7 @@ notes.patch('/students/notes/:noteId/download',
   }
 );
 notes.get('/students/notes/my-uploads',
-  studAuth,
+  anyAuth,
   async (req, res) => {
     try {
       const studentId = req.student.studentId; // ✅ from JWT
