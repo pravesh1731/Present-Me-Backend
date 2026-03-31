@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const studAuth = require("../../middlewares/student_auth");
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, GetCommand, PutCommand,ScanCommand,UpdateCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, PutCommand,ScanCommand,UpdateCommand,QueryCommand } = require('@aws-sdk/lib-dynamodb');
 
 const notes = express.Router();
 
@@ -258,6 +258,36 @@ notes.patch('/students/notes/:noteId/download',
     } catch (error) {
       console.error(error);
       res.status(500).json({ message: 'Failed to update download count' });
+    }
+  }
+);
+notes.get('/students/notes/my-uploads',
+  studAuth,
+  async (req, res) => {
+    try {
+      const studentId = req.student.studentId; // ✅ from JWT
+
+      const result = await dynamo.send(new QueryCommand({
+        TableName: 'notes',
+        IndexName: 'uploadedBy-index',         // ✅ GSI name
+        KeyConditionExpression: 'uploadedBy = :sid',
+        ExpressionAttributeValues: {
+          ':sid': studentId,
+        },
+        ScanIndexForward: false,               // ✅ newest first
+      }));
+
+      const notes = result.Items || [];
+
+      res.json({
+        message: 'Fetched your uploads',
+        total:   notes.length,
+        data:    notes,
+      });
+
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Failed to fetch your uploads' });
     }
   }
 );
