@@ -140,7 +140,7 @@ notesRouter.post(
 
       // ── 4. Upload file to S3 ──
       const fileExt = req.file.originalname.split(".").pop();
-      const fileKey = `study-materials/${institutionId}/${studentId}-${Date.now()}.${fileExt}`;
+      const fileKey = `study-materials/${institutionId}/${uploaderId}-${Date.now()}.${fileExt}`;
 
       await s3.send(
         new PutObjectCommand({
@@ -160,7 +160,7 @@ notesRouter.post(
       const noteItem = {
         noteId,
         institutionId,
-        uploadedBy: studentId,
+        uploadedBy: uploaderId,
         status: "pending",
         type,
         semester,
