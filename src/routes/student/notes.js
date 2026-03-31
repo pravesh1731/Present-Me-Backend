@@ -66,7 +66,7 @@ notes.post(
   upload.single('file'),
   async (req, res) => {
     try {
-      const studentId = req.student.studentId;
+      const studentId = req.student?.studentId ?? req.teacher?.teacherId ?? req.user?.id;
 
       // ── 1. Validate file ──
       if (!req.file) {
@@ -194,7 +194,7 @@ notes.post(
 
 notes.get('/students/notes', anyAuth, async (req, res) => {
   try {
-    const studentId = req.student.studentId;
+    const studentId = req.student?.studentId ?? req.teacher?.teacherId ?? req.user?.id;
 
     const { course, department, semester, type } = req.query;
 
@@ -253,34 +253,11 @@ notes.get('/students/notes', anyAuth, async (req, res) => {
   }
 });
 
-notes.patch('/students/notes/:noteId/download',
-  anyAuth,
-  async (req, res) => {
-    try {
-      const { noteId } = req.params;
-
-      await dynamo.send(new UpdateCommand({
-        TableName: 'notes',
-        Key: { noteId },
-        UpdateExpression: 'SET downloads = if_not_exists(downloads, :zero) + :inc',
-        ExpressionAttributeValues: {
-          ':inc':  1,
-          ':zero': 0,
-        },
-      }));
-
-      res.json({ message: 'Download count updated' });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ message: 'Failed to update download count' });
-    }
-  }
-);
 notes.get('/students/notes/my-uploads',
   anyAuth,
   async (req, res) => {
     try {
-      const studentId = req.student.studentId; // ✅ from JWT
+      const studentId = req.student?.studentId ?? req.teacher?.teacherId ?? req.user?.id;
 
       const result = await dynamo.send(new QueryCommand({
         TableName: 'notes',
@@ -306,5 +283,30 @@ notes.get('/students/notes/my-uploads',
     }
   }
 );
+
+notes.patch('/students/notes/:noteId/download',
+  anyAuth,
+  async (req, res) => {
+    try {
+      const { noteId } = req.params;
+
+      await dynamo.send(new UpdateCommand({
+        TableName: 'notes',
+        Key: { noteId },
+        UpdateExpression: 'SET downloads = if_not_exists(downloads, :zero) + :inc',
+        ExpressionAttributeValues: {
+          ':inc':  1,
+          ':zero': 0,
+        },
+      }));
+
+      res.json({ message: 'Download count updated' });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Failed to update download count' });
+    }
+  }
+);
+
 
 module.exports = notes;
