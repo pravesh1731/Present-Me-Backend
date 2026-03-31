@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const studAuth = require("../../middlewares/student_auth");
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, GetCommand, PutCommand,ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, GetCommand, PutCommand,ScanCommand,UpdateCommand } = require('@aws-sdk/lib-dynamodb');
 
 const notes = express.Router();
 
@@ -237,5 +237,29 @@ notes.get('/students/notes', studAuth, async (req, res) => {
     return res.status(500).json({ message: 'Failed to fetch notes' });
   }
 });
+
+notes.patch('/students/notes/:noteId/download',
+  studAuth,
+  async (req, res) => {
+    try {
+      const { noteId } = req.params;
+
+      await dynamo.send(new UpdateCommand({
+        TableName: 'notes',
+        Key: { noteId },
+        UpdateExpression: 'SET downloads = if_not_exists(downloads, :zero) + :inc',
+        ExpressionAttributeValues: {
+          ':inc':  1,
+          ':zero': 0,
+        },
+      }));
+
+      res.json({ message: 'Download count updated' });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ message: 'Failed to update download count' });
+    }
+  }
+);
 
 module.exports = notes;
