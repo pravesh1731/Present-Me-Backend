@@ -21,6 +21,7 @@ const attendance = require("./routes/teacher/attendance");
 const notice = require("./routes/teacher/notice");
 const notesRouter = require("./routes/student/notes");
 
+
 // Middleware
 app.use(cors(
   {
@@ -47,6 +48,7 @@ app.use("/", studentClass);
 app.use("/", attendance);
 app.use("/", notice);
 app.use("/", notesRouter);
+
 
 // Mount routes
 // app.use('/api/institutions', institutionRoutes);

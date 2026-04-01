@@ -104,44 +104,6 @@ teacherAuth.post("/teachers/logout", (req, res) => {
   res.status(200).json({ message: "Logged out successfully" });
 });
 
-//Change Password Route
-teacherAuth.post("/teachers/change-password", tAuth, async (req, res) => {
-  try {
-    const { oldPassword, newPassword } = req.body;
-    const teacher = req.teacherId;
-
-    // Validate input
-    if (!oldPassword || !newPassword) {
-      return res
-        .status(400)
-        .json({ message: "Old password and new password are required" });
-    }
-
-    // Check if old password matches
-    const isMatch = await bcrypt.compare(oldPassword, teacher.passwordHash);
-    if (!isMatch) {
-      return res.status(401).json({ message: "Old password is incorrect" });
-    }
-
-    // Hash new password
-    const newHashedPassword = await bcrypt.hash(newPassword, 10);
-
-    // Update password in database
-    await awsService.updatePassword(
-      teacher.teacherId,
-      newHashedPassword,
-      "teachers",
-      "teacherId"
-    );
-    res.status(200).json({ message: "Password changed successfully" });
-  } catch (err) {
-    console.error("Error in /change-password:", err);
-    res
-      .status(500)
-      .json({ message: "Internal server error", error: err.message });
-  }
-});
-
 //get list of collage name for teacher and student signup
 teacherAuth.get("/getColleges", async (req, res) => {
   try {

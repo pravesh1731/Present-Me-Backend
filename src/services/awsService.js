@@ -158,7 +158,7 @@ async function updateInstitutionStatus(id, newStatus, tableName, keyName) {
   return res.Attributes;
 }
 
-// Update password for a student
+// Update password for a student and teacher
 async function updatePassword(id, newHashedPassword, tableName, keyName) {
   const cmd = new UpdateCommand({
     TableName: tableName,

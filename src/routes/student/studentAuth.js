@@ -6,6 +6,7 @@ const awsService = require("../../services/awsService");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const studAuth = require("../../middlewares/student_auth");
+const anyAuth = require("../../middlewares/anyAuth");
 // const studentAuth = require("../../middlewares/student_auth");
 
 //signup route
@@ -105,20 +106,36 @@ studentAuth.post("/students/logout", (req, res) => {
 });
 
 //Change Password Route
-studentAuth.post("/students/change-password", studAuth, async (req, res) => {
+studentAuth.post("/change-password", anyAuth, async (req, res) => {
   try {
     const { oldPassword, newPassword } = req.body;
-    const student = req.student;
 
     // Validate input
     if (!oldPassword || !newPassword) {
-      return res
-        .status(400)
-        .json({ message: "Old password and new password are required" });
+      return res.status(400).json({
+        message: "Old password and new password are required",
+      });
     }
 
-    // Check if old password matches
-    const isMatch = await bcrypt.compare(oldPassword, student.passwordHash);
+    let user, tableName, keyName, userId;
+
+    // Identify user type
+    if (req.student) {
+      user = req.student;
+      tableName = "students";
+      keyName = "studentId";
+      userId = user.studentId;
+    } else if (req.teacherId) {
+      user = req.teacherId; // this is actually teacher object
+      tableName = "teachers";
+      keyName = "teacherId";
+      userId = user.teacherId;
+    } else {
+      return res.status(401).json({ message: "Unauthorized user" });
+    }
+
+    // Check old password
+    const isMatch = await bcrypt.compare(oldPassword, user.passwordHash);
     if (!isMatch) {
       return res.status(401).json({ message: "Old password is incorrect" });
     }
@@ -126,19 +143,24 @@ studentAuth.post("/students/change-password", studAuth, async (req, res) => {
     // Hash new password
     const newHashedPassword = await bcrypt.hash(newPassword, 10);
 
-    // Update password in database
+    // Update password
     await awsService.updatePassword(
-      student.studentId,
+      userId,
       newHashedPassword,
-      "students",
-      "studentId"
+      tableName,
+      keyName
     );
-    res.status(200).json({ message: "Password changed successfully" });
+
+    res.status(200).json({
+      message: "Password changed successfully",
+    });
+
   } catch (err) {
     console.error("Error in /change-password:", err);
-    res
-      .status(500)
-      .json({ message: "Internal server error", error: err.message });
+    res.status(500).json({
+      message: "Internal server error",
+      error: err.message,
+    });
   }
 });
 
