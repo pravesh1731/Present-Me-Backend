@@ -20,6 +20,7 @@ const cors = require("cors");
 const attendance = require("./routes/teacher/attendance");
 const notice = require("./routes/teacher/notice");
 const notesRouter = require("./routes/student/notes");
+const deleteRequests = require("./routes/common/delete_account");
 
 
 // Middleware
@@ -48,6 +49,7 @@ app.use("/", studentClass);
 app.use("/", attendance);
 app.use("/", notice);
 app.use("/", notesRouter);
+app.use("/", deleteRequests);
 
 
 // Mount routes
