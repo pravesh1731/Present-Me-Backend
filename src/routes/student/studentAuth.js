@@ -75,9 +75,7 @@ studentAuth.post("/students/login", async (req, res) => {
     }
 
     //create JWT token    cccheckkk
-    const token = jwt.sign({ id: student.studentId }, process.env.JWT_SECRET, {
-      expiresIn: "2d",
-    });
+    const token = jwt.sign({ id: student.studentId }, process.env.JWT_SECRET);
 
     //set token in cookie
     res.cookie("token", token, {

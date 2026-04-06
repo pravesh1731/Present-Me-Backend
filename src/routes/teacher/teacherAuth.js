@@ -78,7 +78,6 @@ teacherAuth.post("/teachers/login", async (req, res) => {
         id: teacher.teacherId,
       },
       process.env.JWT_SECRET,
-      { expiresIn: "2d" }
     );
 
     //set token in cookie
