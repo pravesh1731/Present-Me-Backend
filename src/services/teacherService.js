@@ -318,6 +318,22 @@ async function getVerifiedTeachers(institutionId) {
   return res.Items || [];
 }
 
+// Get all students
+async function getStudentList(institutionId) {
+  const cmd = new QueryCommand({
+    TableName: "students",
+    IndexName: "institutionId-index",
+    KeyConditionExpression: "institutionId = :institutionId",
+    ExpressionAttributeValues: {
+      ":institutionId": institutionId,
+    },
+  });
+
+  const res = await docClient.send(cmd);
+  const students = (res.Items || []).map(({ passwordHash, ...rest }) => rest);
+  return students;
+}
+
 // Get pending teachers
 async function getPendingTeachers(institutionId) {
   const cmd = new ScanCommand({
@@ -346,4 +362,5 @@ module.exports = {
   updateTeacherProfile,
   getVerifiedTeachers,
   getPendingTeachers,
+  getStudentList,
 };
