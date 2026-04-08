@@ -175,7 +175,7 @@ teacherClass.get("/teachers/class", tAuth, async (req, res) => {
     return res.status(400).json({ message: "Teacher is not found" });
   }
   try {
-    const classes = await teacherService.getClassesByTeacher(teacherId);
+    const classes = await getClassesByTeacher(teacherId)
 
     return res.status(200).json(classes);
   } catch (err) {
