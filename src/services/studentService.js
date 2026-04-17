@@ -3,6 +3,7 @@ const { findByEmail, findById } = require("./awsService");
 const {v4:uuidv4}= require('uuid');
 const bcrypt = require("bcrypt");
 const{docClient}= require('../dynamoDb');
+const { QueryCommand } = require("@aws-sdk/lib-dynamodb");
 
 
 const SALT_ROUNDS=10;
@@ -126,12 +127,11 @@ async function getStudentJoinRequests(studentId){
 
 async function getStudentEnrollClasses(studentId) {
   try {
+    // Step 1: Scan all classes and filter enrolled ones
     const scanParams = {
       TableName: "classes",
-      // ✅ add isActive to projection
       ProjectionExpression: "classCode, className, createdBy, roomNo, classDays, startTime, endTime, students, isActive",
     };
-
     const result = await docClient.send(new ScanCommand(scanParams));
 
     const enrolledClasses = result.Items.filter(
@@ -140,7 +140,46 @@ async function getStudentEnrollClasses(studentId) {
 
     const requestedClasses = await Promise.all(
       enrolledClasses.map(async (cls) => {
+
+        // Step 2: Fetch teacher info
         const teacher = await getTeacherById(cls.createdBy);
+
+        // Step 3: Fetch all attendance records for this classCode
+        const attendanceData = await docClient.send(new QueryCommand({
+          TableName: "attendance",
+          KeyConditionExpression: "classCode = :c",
+          ExpressionAttributeValues: {
+            ":c": cls.classCode
+          }
+        }));
+
+        const records = attendanceData.Items || [];
+
+        // Step 4: Build per-date attendance list + count totals
+        let totalClasses = 0;
+        let present = 0;
+        const attendanceList = [];
+
+        for (const record of records) {
+          const studentRecord = (record.attendance || []).find(
+            (s) => s.studentId === studentId
+          );
+
+          if (studentRecord) {
+            totalClasses += 1;
+            if (studentRecord.status === 1) present += 1;
+
+            attendanceList.push({
+              date: record.date,
+              status: studentRecord.status, // 1 = present, 0 = absent
+            });
+          }
+        }
+
+        const absent = totalClasses - present;
+        const percentage = totalClasses > 0
+          ? parseFloat(((present / totalClasses) * 100).toFixed(1))
+          : 0.0;
 
         return {
           classCode: cls.classCode,
@@ -151,15 +190,21 @@ async function getStudentEnrollClasses(studentId) {
           roomNo: cls.roomNo,
           teacherId: cls.createdBy,
           teacherName: teacher ? `${teacher.firstName} ${teacher.lastName}` : "Unknown",
-          isActive: cls.isActive ?? true,  // ✅ add this
+          isActive: cls.isActive ?? true,
+          attendanceSummary: {
+            totalClasses,
+            present,
+            absent,
+            percentage,
+          },
+          attendanceRecords: attendanceList, // per-day breakdown
         };
       })
     );
 
     return requestedClasses;
-
   } catch (err) {
-    throw new Error("Failed to get join requests: " + err.message);
+    throw new Error("Failed to get enrolled classes: " + err.message);
   }
 }
 

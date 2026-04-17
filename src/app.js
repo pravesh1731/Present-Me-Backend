@@ -22,6 +22,9 @@ const notice = require("./routes/teacher/notice");
 const notesRouter = require("./routes/student/notes");
 const deleteRequests = require("./routes/common/delete_account");
 const teacher = require("./routes/admin/teachers");
+const adminStudentClass = require("./routes/admin/students");
+const adminDownloadAttendance = require("./routes/admin/attendance");
+
 
 
 // Middleware
@@ -52,6 +55,8 @@ app.use("/", notice);
 app.use("/", notesRouter);
 app.use("/", deleteRequests);
 app.use("/", teacher);
+app.use("/", adminStudentClass);
+app.use("/", adminDownloadAttendance);
 
 
 // Mount routes
