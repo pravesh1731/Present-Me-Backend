@@ -13,7 +13,7 @@ async function sendVerificationEmail({
   firstName,
   verificationToken,
 }) {
-  const verificationUrl =`${process.env.FRONTEND_URL}/students/verify-email?token=${verificationToken}`;
+  const verificationUrl =`${process.env.FRONTEND_URL}/api/students/verify-email?token=${verificationToken}`;
 
   const mailOptions = {
     from: `"Present-Me" <${process.env.EMAIL_USER}>`,
