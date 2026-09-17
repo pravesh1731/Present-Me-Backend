@@ -23,7 +23,8 @@ async function getTeacherById(teacherId) {
 }
 
 
-async function createStudent({firstName,lastName,emailId,phone,institutionId,password,rollNo, semester}){
+async function createStudent({firstName,lastName,emailId,phone,institutionId,password,rollNo, semester,
+  emailVerified = false, emailVerificationTokenHash = null,emailVerificationExpiresAt = null}){
   //lowercase email to ensure uniqueness
   const normalizedEmail=emailId.toLowerCase();
   //1) check duplicate
@@ -56,6 +57,13 @@ async function createStudent({firstName,lastName,emailId,phone,institutionId,pas
     institutionId,            
     type: "student",
     semester,
+
+    emailVerified,
+    emailVerifiedAt: null,
+    emailVerificationTokenHash,
+    emailVerificationExpiresAt,
+
+
     createdAt: new Date().toISOString()
   };
 

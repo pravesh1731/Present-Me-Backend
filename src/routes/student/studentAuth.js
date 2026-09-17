@@ -1,13 +1,24 @@
 const express = require("express");
-const { createStudent, createWallet } = require("../../services/studentService");
+const {
+  createStudent,
+  createWallet,
+} = require("../../services/studentService");
 const { validateStudentSchema } = require("../../validations/validation");
 const studentAuth = express.Router();
 const awsService = require("../../services/awsService");
 const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
-const studAuth = require("../../middlewares/student_auth");
 const anyAuth = require("../../middlewares/anyAuth");
-// const studentAuth = require("../../middlewares/student_auth");
+const { verifyEmail } = require("../../services/verifaliaService");
+const {
+  generateVerificationToken,
+  hashVerificationToken,
+} = require("../../utils/emailVerification");
+const { sendVerificationEmail } = require("../../services/emailService");
+const { UpdateCommand,  } = require("@aws-sdk/lib-dynamodb");
+const {  dbClient } = require("../../dynamoDb");
+const { QueryCommand } = require("@aws-sdk/lib-dynamodb");
+
 
 //signup route
 studentAuth.post("/students/signup", async (req, res) => {
@@ -26,7 +37,7 @@ studentAuth.post("/students/signup", async (req, res) => {
       institutionId,
       password,
       rollNo,
-      semester
+      semester,
     } = value;
 
     const existingStudent = await awsService.findByEmail(emailId, "students");
@@ -36,6 +47,35 @@ studentAuth.post("/students/signup", async (req, res) => {
         .json({ message: "Email already exists, Register with new account" });
     }
 
+    // 2. Verify email with Verifalia
+    const verifaliaResult = await verifyEmail(emailId);
+
+    const verificationEntry = verifaliaResult?.entries?.[0];
+
+    if (
+      !verificationEntry ||
+      verificationEntry.status !== "Success" ||
+      verificationEntry.classification !== "Deliverable"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide a valid and deliverable email address.",
+        classification: verificationEntry?.classification || null,
+        status: verificationEntry?.status || null,
+      });
+    }
+
+    // 3. Generate email verification token
+    const verificationToken = generateVerificationToken();
+
+    // Store only the hash in DynamoDB
+    const verificationTokenHash = hashVerificationToken(verificationToken);
+
+    // Token expires in 24 hours
+    const verificationExpiresAt = new Date(
+      Date.now() + 24 * 60 * 60 * 1000,
+    ).toISOString();
+
     const student = await createStudent({
       firstName,
       lastName,
@@ -44,12 +84,29 @@ studentAuth.post("/students/signup", async (req, res) => {
       institutionId,
       password,
       rollNo,
-      semester
+      semester,
+
+      emailVerified: false,
+      emailVerifiedAt: null,
+      emailVerificationTokenHash: verificationTokenHash,
+      emailVerificationExpiresAt: verificationExpiresAt,
     });
 
-    await createWallet(student.studentId);      
+    await createWallet(student.studentId);
 
-    res.status(201).json({ success: true, data: student });
+    await sendVerificationEmail({
+      email: emailId,
+      firstName,
+      verificationToken,
+    });
+
+    res
+      .status(201)
+      .json({
+        success: true,
+        data: student,
+        message: "Account created successfully. Please verify your email.",
+      });
   } catch (err) {
     console.error(err);
     res.status(400).json({ success: false, message: err.message });
@@ -76,6 +133,16 @@ studentAuth.post("/students/login", async (req, res) => {
     const isMatch = await bcrypt.compare(password, student.passwordHash);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // Check email verification
+    if (student.emailVerified !== true) {
+      return res.status(403).json({
+        success: false,
+        code: "EMAIL_NOT_VERIFIED",
+        message: "Email verification required",
+        email: student.emailId,
+      });
     }
 
     //create JWT token    cccheckkk
@@ -150,18 +217,197 @@ studentAuth.post("/change-password", anyAuth, async (req, res) => {
       userId,
       newHashedPassword,
       tableName,
-      keyName
+      keyName,
     );
 
     res.status(200).json({
       message: "Password changed successfully",
     });
-
   } catch (err) {
     console.error("Error in /change-password:", err);
     res.status(500).json({
       message: "Internal server error",
       error: err.message,
+    });
+  }
+});
+
+//verify email route
+studentAuth.get("/students/verify-email", async (req, res) => {
+  try {
+    const { token } = req.query;
+
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: "Verification token is required",
+      });
+    }
+
+    // Hash the token received from the email
+    const tokenHash = hashVerificationToken(token);
+
+    // Find student using verification token
+   const result = await dbClient.send(
+  new QueryCommand({
+    TableName: "students",
+    IndexName: "emailVerificationTokenHash-index",
+
+    KeyConditionExpression:
+      "emailVerificationTokenHash = :tokenHash",
+
+    ExpressionAttributeValues: {
+      ":tokenHash": tokenHash,
+    },
+
+    Limit: 1,
+  })
+);
+
+    const student = result.Items?.[0];
+
+    if (!student) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired verification link",
+      });
+    }
+
+    // Check expiration
+    if (
+      !student.emailVerificationExpiresAt ||
+      new Date(student.emailVerificationExpiresAt) < new Date()
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Verification link has expired",
+      });
+    }
+
+    // Already verified
+    if (student.emailVerified === true) {
+      return res.status(200).json({
+        success: true,
+        message: "Email is already verified",
+      });
+    }
+
+    // Update student
+    await dbClient.send(
+      new UpdateCommand({
+        TableName: "students",
+        Key: {
+          studentId: student.studentId,
+        },
+        UpdateExpression: `
+          SET emailVerified = :verified,
+              emailVerifiedAt = :verifiedAt
+          REMOVE emailVerificationTokenHash,
+                 emailVerificationExpiresAt
+        `,
+        ExpressionAttributeValues: {
+          ":verified": true,
+          ":verifiedAt": new Date().toISOString(),
+        },
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Email verified successfully",
+    });
+  } catch (err) {
+    console.error("Email verification error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Email verification failed",
+    });
+  }
+});
+
+//resent verification email route
+studentAuth.post("/students/resend-verification", async (req, res) => {
+  try {
+    const { emailId } = req.body;
+
+    if (!emailId) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const normalizedEmail = emailId.toLowerCase();
+
+    // Find student
+    const student = await awsService.findByEmail(
+      normalizedEmail,
+      "students"
+    );
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found",
+      });
+    }
+
+    // Already verified
+    if (student.emailVerified === true) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is already verified",
+      });
+    }
+
+    // Generate new token
+    const verificationToken = generateVerificationToken();
+
+    // Hash token
+    const verificationTokenHash =
+      hashVerificationToken(verificationToken);
+
+    // New expiry: 24 hours
+    const verificationExpiresAt = new Date(
+      Date.now() + 24 * 60 * 60 * 1000
+    ).toISOString();
+
+    // Update student
+    await dbClient.send(
+      new UpdateCommand({
+        TableName: "students",
+        Key: {
+          studentId: student.studentId,
+        },
+        UpdateExpression: `
+          SET emailVerificationTokenHash = :tokenHash,
+              emailVerificationExpiresAt = :expiresAt
+        `,
+        ExpressionAttributeValues: {
+          ":tokenHash": verificationTokenHash,
+          ":expiresAt": verificationExpiresAt,
+        },
+      })
+    );
+
+    // Send new verification email
+    await sendVerificationEmail({
+      email: student.emailId,
+      firstName: student.firstName,
+      verificationToken,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Verification email sent successfully",
+    });
+  } catch (err) {
+    console.error("Resend verification error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to resend verification email",
     });
   }
 });
