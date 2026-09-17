@@ -49,7 +49,13 @@ app.use(cookieParser());
 
 app.get("/.well-known/assetlinks.json", (req, res) => {
   res.sendFile(
-    path.join(__dirname, "public", ".well-known", "assetlinks.json")
+    path.join(__dirname, "public", ".well-known", "assetlinks.json"),
+    {
+      dotfiles: "allow",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    }
   );
 });
 
