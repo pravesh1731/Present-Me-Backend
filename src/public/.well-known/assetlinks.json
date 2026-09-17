@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.presentme.app",
+      "sha256_cert_fingerprints": [
+        "55:E7:41:13:2E:9B:D9:7B:49:09:33:BE:79:03:F1:E6:4F:AE:1A:07:F9:71:E6:57:6C:73:4A:61:9E:1A:1C:72"
+      ]
+    }
+  }
+]

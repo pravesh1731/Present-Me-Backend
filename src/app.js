@@ -3,6 +3,8 @@ require("dotenv").config(); // ensure .env is loaded
 const express = require("express");
 const bodyParser = require("body-parser");
 const cookieParser = require("cookie-parser");
+const path = require("path");
+
 
 const authRouter = require("./routes/admin/auth");
 const dashboardrouter = require("./routes/admin/dashboard");
@@ -65,6 +67,9 @@ app.use("/", adminDownloadAttendance);
 app.use("/", pyqNotesRouter);
 app.use("/", verifaliaRouter);
 app.use("/", ERouter);
+
+app.use(express.static(path.join(__dirname, "public")));
+
 
 
 
