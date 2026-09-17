@@ -5,6 +5,10 @@ const studAuth = require("../../middlewares/student_auth");
 const tAuth = require("../../middlewares/teacherAuth");
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+const {
+  TransactWriteCommand,
+} = require("@aws-sdk/lib-dynamodb");
+
 
 const {
   DynamoDBDocumentClient,
@@ -16,6 +20,8 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const { findById } = require("../../services/awsService");
 const anyAuth = require("../../middlewares/anyAuth");
+const SAuth = require("../../middlewares/s_admin_auth");
+const { docClient } = require("../../dynamoDb");
 
 const notesRouter = express.Router();
 
@@ -35,7 +41,7 @@ const dynamo = DynamoDBDocumentClient.from(
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB max
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
   fileFilter: (req, file, cb) => {
     const allowed = [
       "application/pdf",
@@ -65,57 +71,148 @@ notesRouter.post(
   upload.single("file"),
   async (req, res) => {
     try {
-      const uploaderId = req.student?.studentId ?? req.teacherId?.teacherId;
+      // ─────────────────────────────────────
+      // 1. Get uploader ID and role
+      // ─────────────────────────────────────
 
-      // ── 1. Validate file ──
+      const uploaderId =
+        req.student?.studentId ??
+        req.teacherId?.teacherId;
+
+      const uploaderRole = req.student
+        ? "student"
+        : "teacher";
+
+      if (!uploaderId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized user",
+        });
+      }
+
+      // ─────────────────────────────────────
+      // 2. Validate file
+      // ─────────────────────────────────────
+
       if (!req.file) {
-        return res.status(400).json({ message: "No file uploaded" });
+        return res.status(400).json({
+          success: false,
+          message: "No file uploaded",
+        });
       }
 
-      // ── 2. Validate required body fields ──
-      const { type, semester, year, course, department, teacherName } =
-        req.body;
+      // ─────────────────────────────────────
+      // 3. Validate required body fields
+      // ─────────────────────────────────────
 
-      if (!type || !semester || !year || !course || !department) {
-        return res.status(400).json({ message: "Missing required fields" });
+      const {
+        type,
+        semester,
+        year,
+        course,
+        department,
+        teacherName,
+      } = req.body;
+
+      if (
+        !type ||
+        !semester ||
+        !year ||
+        !course ||
+        !department
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Missing required fields",
+        });
       }
 
+       if (type !== "Notes" && type !== "PYQ") {
+        return res.status(400).json({
+          success: false,
+          message: "Type must be either Notes or PYQ",
+        });
+      }
+
+      // Teacher name is required for Notes
       if (type === "Notes" && !teacherName) {
-        return res
-          .status(400)
-          .json({ message: "Teacher name is required for Notes" });
+        return res.status(400).json({
+          success: false,
+          message: "Teacher name is required for Notes",
+        });
       }
 
-      // ── 3. Fetch student to get institutionId ──
-      const studentResult = await dynamo.send(new GetCommand({
-    TableName: req.student ? 'students' : 'teachers', // ✅ correct table
-    Key: req.student
-      ? { studentId: uploaderId }
-      : { teacherId: uploaderId },
-  }));
+      // ─────────────────────────────────────
+      // 4. Get uploader from DynamoDB
+      // ─────────────────────────────────────
 
-      if (!studentResult.Item) {
-        return res.status(404).json({ message: "Student not found" });
+      const userTable =
+        uploaderRole === "student"
+          ? "students"
+          : "teachers";
+
+      const userKey =
+        uploaderRole === "student"
+          ? { studentId: uploaderId }
+          : { teacherId: uploaderId };
+
+      const userResult = await dynamo.send(
+        new GetCommand({
+          TableName: userTable,
+          Key: userKey,
+        })
+      );
+
+      if (!userResult.Item) {
+        return res.status(404).json({
+          success: false,
+          message: `${
+            uploaderRole === "student"
+              ? "Student"
+              : "Teacher"
+          } not found`,
+        });
       }
 
-      const institutionId = studentResult.Item.institutionId;
+      const user = userResult.Item;
 
-      // ── 3.5 ✅ Duplicate check ──
+      // ─────────────────────────────────────
+      // 5. Get institution
+      // ─────────────────────────────────────
+
+      const institutionId = user.institutionId;
+
+      if (!institutionId) {
+        return res.status(400).json({
+          success: false,
+          message: "Uploader institution not found",
+        });
+      }
+
+      
+
+      // ─────────────────────────────────────
+      // 7. Duplicate check
+      // ─────────────────────────────────────
+
       const duplicateCheck = await dynamo.send(
         new ScanCommand({
           TableName: "notes",
+
           FilterExpression: `
-          institutionId = :iid AND
-          #type = :type AND
-          semester = :semester AND
-          #year = :year AND
-          course = :course AND
-          department = :department 
-        `,
+            institutionId = :iid AND
+            #type = :type AND
+            semester = :semester AND
+            #year = :year AND
+            course = :course AND
+            department = :department
+          `,
+
           ExpressionAttributeNames: {
             "#type": "type",
             "#year": "year",
           },
+
           ExpressionAttributeValues: {
             ":iid": institutionId,
             ":type": type,
@@ -124,23 +221,38 @@ notesRouter.post(
             ":course": course,
             ":department": department,
           },
+
           Limit: 1,
-        }),
+        })
       );
 
-      // ✅ If a match found — return 409 warning
-      if (duplicateCheck.Items && duplicateCheck.Items.length > 0) {
+      // ─────────────────────────────────────
+      // 8. Duplicate found
+      // ─────────────────────────────────────
+
+      if (
+        duplicateCheck.Items &&
+        duplicateCheck.Items.length > 0
+      ) {
         return res.status(409).json({
           success: false,
           isDuplicate: true,
           message:
-            "This file already exists. A note with the same file name, type, semester, year, course and department has already been uploaded.",
+            "This file already exists. A Notes/PYQ of this course and department already exists.",
         });
       }
 
-      // ── 4. Upload file to S3 ──
-      const fileExt = req.file.originalname.split(".").pop();
-      const fileKey = `study-materials/${institutionId}/${uploaderId}-${Date.now()}.${fileExt}`;
+      // ─────────────────────────────────────
+      // 9. Upload file to S3
+      // ─────────────────────────────────────
+
+      const fileExt = req.file.originalname
+        .split(".")
+        .pop();
+
+      const fileKey =
+        `study-materials/${institutionId}/` +
+        `${uploaderId}-${Date.now()}.${fileExt}`;
 
       await s3.send(
         new PutObjectCommand({
@@ -148,57 +260,110 @@ notesRouter.post(
           Key: fileKey,
           Body: req.file.buffer,
           ContentType: req.file.mimetype,
-        }),
+        })
       );
 
-      const fileUrl = `https://presentme-document.s3.ap-south-1.amazonaws.com/${fileKey}`;
+      const fileUrl =
+        `https://presentme-document.s3.ap-south-1.amazonaws.com/${fileKey}`;
 
-      // ── 5. Save to DynamoDB ──
+      // ─────────────────────────────────────
+      // 10. Create note
+      // ─────────────────────────────────────
+
       const noteId = `note-${uuidv4()}`;
+
       const createdAt = new Date().toISOString();
+
+      // ─────────────────────────────────────
+      // 11. DynamoDB item
+      // ─────────────────────────────────────
 
       const noteItem = {
         noteId,
         institutionId,
+
+        // Uploader information
         uploadedBy: uploaderId,
+       
+
+        // Note information
         status: "pending",
         type,
         semester,
         year,
         course,
         department,
-        teacherName: type === "Notes" ? teacherName : null,
+
+        // Teacher name for Notes
+        teacherName:
+          type === "Notes"
+            ? teacherName
+            : null,
+
+        // File information
         fileName: req.file.originalname,
         fileUrl,
         fileKey,
+
+        // Downloads
         downloads: 0,
+
+        // Upload time
         createdAt,
       };
+
+      // ─────────────────────────────────────
+      // 12. Save to DynamoDB
+      // ─────────────────────────────────────
 
       await dynamo.send(
         new PutCommand({
           TableName: "notes",
           Item: noteItem,
-        }),
+        })
       );
 
-      // ── 6. Respond ──
-      return res.status(201).json({
-        message: "Uploaded successfully. Pending approval.",
-        noteId,
-        fileUrl,
-        status: "pending",
-      });
-    } catch (error) {
-      console.error("Notes upload error:", error);
+      // ─────────────────────────────────────
+      // 13. Response
+      // ─────────────────────────────────────
 
-      if (error.message?.includes("Only PDF")) {
-        return res.status(400).json({ message: error.message });
+      return res.status(201).json({
+        success: true,
+        message:"Uploaded successfully. Pending approval.",
+
+        noteId,
+
+        uploadedBy: uploaderId,
+        
+
+        status: "pending",
+        createdAt,
+
+        fileUrl,
+      });
+
+    } catch (error) {
+      console.error(
+        "Notes upload error:",
+        error
+      );
+
+      if (
+        error.message?.includes("Only PDF")
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: error.message,
+        });
       }
 
-      return res.status(500).json({ message: "Failed to upload note" });
+      return res.status(500).json({
+        success: false,
+        message: "Failed to upload note",
+        error: error.message,
+      });
     }
-  },
+  }
 );
 
 notesRouter.get("/students/notes", anyAuth, async (req, res) => {
@@ -316,6 +481,408 @@ notesRouter.patch(
       res.status(500).json({ message: "Failed to update download count" });
     }
   },
+);
+
+
+
+// Minimum withdrawal amount
+const MIN_WITHDRAWAL = 10;
+
+notesRouter.post("/withdrawal/request",anyAuth ,async (req, res) => {
+    try {
+      // =================================================
+      // 1. GET AUTHENTICATED USER
+      // =================================================
+
+      const userId =
+        req.student?.studentId ??
+        req.teacherId?.teacherId;
+
+      const userRole = req.student
+        ? "student"
+        : req.teacherId
+        ? "teacher"
+        : null;
+
+      if (!userId || !userRole) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized user",
+        });
+      }
+      // =================================================
+      // 2. GET REQUEST BODY
+      // =================================================
+
+      const { amount, upiId } = req.body;
+
+      // =================================================
+      // 3. VALIDATE AMOUNT
+      // =================================================
+
+      const withdrawalAmount = Number(amount);
+
+      if (
+        amount === undefined ||
+        amount === null ||
+        amount === "" ||
+        !Number.isFinite(withdrawalAmount)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid withdrawal amount is required",
+        });
+      }
+
+      if (withdrawalAmount < MIN_WITHDRAWAL) {
+        return res.status(400).json({
+          success: false,
+          message: `Minimum withdrawal amount is ₹${MIN_WITHDRAWAL}`,
+        });
+      }
+
+      // Only allow 2 decimal places
+      if (
+        Math.round(withdrawalAmount * 100) !==
+        withdrawalAmount * 100
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Withdrawal amount can have maximum 2 decimal places",
+        });
+      }
+
+      // =================================================
+      // 4. VALIDATE UPI ID
+      // =================================================
+
+      if (
+        !upiId ||
+        typeof upiId !== "string" ||
+        !upiId.trim()
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "UPI ID is required",
+        });
+      }
+
+      const cleanUpiId = upiId.trim().toLowerCase();
+
+      // Basic UPI format validation
+      const upiRegex = /^[a-zA-Z0-9._-]{2,}@[a-zA-Z]{2,}$/;
+
+      if (!upiRegex.test(cleanUpiId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid UPI ID",
+        });
+      }
+
+      // =================================================
+      // 5. FIND WALLET
+      // =================================================
+
+      const walletResult = await docClient.send(
+        new QueryCommand({
+          TableName: "wallet",
+          IndexName: "userId-index",
+          KeyConditionExpression:
+            "userId = :userId",
+          ExpressionAttributeValues: {
+            ":userId": userId,
+          },
+          Limit: 1,
+        })
+      );
+
+      const wallet = walletResult.Items?.[0];
+
+      if (!wallet) {
+        return res.status(404).json({
+          success: false,
+          message: "Wallet not found",
+        });
+      }
+
+      // =================================================
+      // 6. CHECK WALLET STATUS
+      // =================================================
+
+      if (wallet.status !== "ACTIVE") {
+        return res.status(400).json({
+          success: false,
+          message: "Wallet is not active",
+        });
+      }
+
+      // =================================================
+      // 7. CHECK BALANCE
+      // =================================================
+
+      const currentBalance = Number(wallet.balance || 0);
+
+      if (withdrawalAmount > currentBalance) {
+        return res.status(400).json({
+          success: false,
+          message: "Insufficient wallet balance",
+          data: {
+            availableBalance: currentBalance,
+            requestedAmount: withdrawalAmount,
+          },
+        });
+      }
+
+      // =================================================
+      // 8. GET INSTITUTION ID
+      // =================================================
+
+      let institutionId = null;
+
+      if (userRole === "student") {
+        const studentResult = await docClient.send(
+          new GetCommand({
+            TableName: "students",
+            Key: {
+              studentId: userId,
+            },
+          })
+        );
+
+        if (!studentResult.Item) {
+          return res.status(404).json({
+            success: false,
+            message: "Student not found",
+          });
+        }
+
+        institutionId =
+          studentResult.Item.institutionId;
+      }
+
+      if (userRole === "teacher") {
+        const teacherResult = await docClient.send(
+          new GetCommand({
+            TableName: "teachers",
+            Key: {
+              teacherId: userId,
+            },
+          })
+        );
+
+        if (!teacherResult.Item) {
+          return res.status(404).json({
+            success: false,
+            message: "Teacher not found",
+          });
+        }
+
+        institutionId =
+          teacherResult.Item.institutionId;
+      }
+
+      if (!institutionId) {
+        return res.status(400).json({
+          success: false,
+          message: "User institution not found",
+        });
+      }
+
+      // =================================================
+      // 9. CREATE IDs
+      // =================================================
+
+      const withdrawalId =`wd-${uuidv4()}`;
+
+      const transactionId = `txn-${uuidv4()}`;
+
+      const now =new Date().toISOString();
+
+      // =================================================
+      // 10. TRANSACTION
+      // =================================================
+      //
+      // Wallet balance
+      //       ↓
+      // Debit amount
+      //
+      // Withdrawal
+      //       ↓
+      // PENDING
+      //
+      // WalletTransaction
+      //       ↓
+      // DEBIT
+      //
+      // All three happen together.
+      // =================================================
+
+      await docClient.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            // -----------------------------------------
+            // UPDATE WALLET
+            // -----------------------------------------
+
+            {
+              Update: {
+                TableName: "wallet",
+
+                Key: {
+                  walletId: wallet.walletId,
+                },
+
+                UpdateExpression:
+                  "SET balance = balance - :amount, updatedAt = :updatedAt",
+
+                ConditionExpression:
+                  "attribute_exists(walletId) AND " +
+                  "#status = :active AND " +
+                  "balance >= :amount",
+
+                ExpressionAttributeNames: {
+                  "#status": "status",
+                },
+
+                ExpressionAttributeValues: {
+                  ":amount": withdrawalAmount,
+                  ":active": "ACTIVE",
+                  ":updatedAt": now,
+                },
+              },
+            },
+
+            // -----------------------------------------
+            // CREATE WITHDRAWAL
+            // -----------------------------------------
+
+            {
+              Put: {
+                TableName: "withdrawal",
+
+                Item: {
+                  withdrawalId,
+
+                  walletId: wallet.walletId,
+
+                  userId,
+
+                  userRole,
+
+                  institutionId,
+
+                  amount: withdrawalAmount,
+
+                  currency: "INR",
+
+                  upiId: cleanUpiId,
+
+                  status: "PENDING",
+
+                  requestedAt: now,
+
+                  createdAt: now,
+
+                  updatedAt: now,
+                },
+
+                ConditionExpression:
+                  "attribute_not_exists(withdrawalId)",
+              },
+            },
+
+            // -----------------------------------------
+            // CREATE WALLET TRANSACTION
+            // -----------------------------------------
+
+            {
+              Put: {
+                TableName: "walletTransaction",
+
+                Item: {
+                  transactionId,
+
+                  walletId: wallet.walletId,
+
+                  userId,
+
+                  type: "DEBIT",
+
+                  amount: withdrawalAmount,
+
+                  source: "WITHDRAWAL",
+
+                  referenceId: withdrawalId,
+
+                  description:
+                    `Withdrawal request of ₹${withdrawalAmount}`,
+
+                  status: "COMPLETED",
+
+                  createdAt: now,
+                },
+
+                ConditionExpression:
+                  "attribute_not_exists(transactionId)",
+              },
+            },
+          ],
+        })
+      );
+
+      // =================================================
+      // 11. RESPONSE
+      // =================================================
+
+      return res.status(201).json({
+        success: true,
+
+        message:
+          "Withdrawal request submitted successfully",
+
+        data: {
+          withdrawalId,
+
+          userId,
+
+          userRole,
+
+          institutionId,
+
+          walletId: wallet.walletId,
+
+          amount: withdrawalAmount,
+
+          currency: "INR",
+
+          upiId: cleanUpiId,
+
+          status: "PENDING",
+
+          requestedAt: now,
+
+          // Expected balance after withdrawal
+          availableBalance:
+            currentBalance -
+            withdrawalAmount,
+        },
+      });
+
+    } catch (error) {
+      console.error(
+        "Withdrawal request error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Failed to create withdrawal request",
+        error: error.message,
+      });
+    }
+  }
 );
 
 module.exports = notesRouter;

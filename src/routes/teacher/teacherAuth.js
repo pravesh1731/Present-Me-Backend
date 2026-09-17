@@ -10,6 +10,7 @@ const { findByEmail } = require("../../services/awsService");
 const tAuth = require("../../middlewares/teacherAuth");
 const awsService = require("../../services/awsService");
 const { getAllInstitutions } = require("../../services/teacherService");
+const { createWallet } = require("../../services/studentService");
 
 const teacherAuth = express.Router();
 
@@ -32,8 +33,9 @@ teacherAuth.post("/teachers/signup", async (req, res) => {
         .json({ success: false, message: "Email already exists" });
     }
     const newTeacher = await createTeacher(req.body);
-    res
-      .status(201)
+    await createWallet(newTeacher.teacherId);
+
+    res.status(201)
       .json({
         success: true,
         message: "Teacher registered successfully",

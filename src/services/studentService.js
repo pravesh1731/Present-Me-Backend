@@ -2,7 +2,7 @@ const { PutCommand,UpdateCommand ,ScanCommand, GetCommand} = require("@aws-sdk/l
 const { findByEmail, findById } = require("./awsService");
 const {v4:uuidv4}= require('uuid');
 const bcrypt = require("bcrypt");
-const{docClient}= require('../dynamoDb');
+const{docClient, dbClient}= require('../dynamoDb');
 const { QueryCommand } = require("@aws-sdk/lib-dynamodb");
 
 
@@ -23,7 +23,7 @@ async function getTeacherById(teacherId) {
 }
 
 
-async function createStudent({firstName,lastName,emailId,phone,institutionId,password,rollNo}){
+async function createStudent({firstName,lastName,emailId,phone,institutionId,password,rollNo, semester}){
   //lowercase email to ensure uniqueness
   const normalizedEmail=emailId.toLowerCase();
   //1) check duplicate
@@ -55,6 +55,7 @@ async function createStudent({firstName,lastName,emailId,phone,institutionId,pas
     rollNo,  
     institutionId,            
     type: "student",
+    semester,
     createdAt: new Date().toISOString()
   };
 
@@ -234,5 +235,35 @@ async function updateStudentProfile(id, updateFields) {
   return result.Attributes;
 }
 
+const createWallet = async (userId) => {
+  try {
+    const now = new Date().toISOString();
 
-module.exports={createStudent,addJoinRequest,getStudentJoinRequests, updateStudentProfile,getStudentEnrollClasses};
+    const wallet = {
+      walletId: "w-" + uuidv4(),
+      userId: userId,
+      balance: 0,
+      currency: "INR",
+      status: "ACTIVE",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await dbClient.send(
+      new PutCommand({
+        TableName: "wallet",
+        Item: wallet,
+        ConditionExpression: "attribute_not_exists(userId)",
+      })
+    );
+
+    return wallet;
+  } catch (error) {
+    console.error("Error creating wallet:", error);
+    throw error;
+  }
+};
+
+
+
+module.exports={createStudent,addJoinRequest,getStudentJoinRequests, updateStudentProfile,getStudentEnrollClasses, createWallet};

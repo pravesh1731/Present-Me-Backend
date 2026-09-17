@@ -22,7 +22,7 @@ const SAuth = async (req, res, next) => {
     if (!id) {
       return res.status(401).json({ message: "Admin not found" });
     }
-
+console.log("Decoded token:", id.emailId.toLowerCase());
     // Load full user by email
     const AdminEmail = await findByEmail(id.emailId, "admin");
     if (!AdminEmail) {

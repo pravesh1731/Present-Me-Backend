@@ -24,6 +24,7 @@ const deleteRequests = require("./routes/common/delete_account");
 const teacher = require("./routes/admin/teachers");
 const adminStudentClass = require("./routes/admin/students");
 const adminDownloadAttendance = require("./routes/admin/attendance");
+const pyqNotesRouter = require("./routes/sAdmin/pyq_and_notes");
 
 
 
@@ -57,6 +58,7 @@ app.use("/", deleteRequests);
 app.use("/", teacher);
 app.use("/", adminStudentClass);
 app.use("/", adminDownloadAttendance);
+app.use("/", pyqNotesRouter);
 
 
 // Mount routes

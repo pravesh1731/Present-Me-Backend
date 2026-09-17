@@ -54,6 +54,15 @@ const validateStudentSchema = Joi.object({
     "string.empty": "Roll number is required",
   }),
 
+
+  semester: Joi.number().integer().required().min(1).max(8).messages({
+    'any.required': 'Semester is required',
+    'number.min': 'Semester must be at least 1',
+    'number.max': 'Semester cannot be greater than 8',
+    'number.base': 'Semester must be a number'
+}),
+
+
   institutionId: Joi.string().trim().required().messages({
     "string.empty": "Institution selection is required",
   }),

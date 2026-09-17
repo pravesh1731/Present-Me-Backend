@@ -1,5 +1,5 @@
 const express = require("express");
-const { createStudent } = require("../../services/studentService");
+const { createStudent, createWallet } = require("../../services/studentService");
 const { validateStudentSchema } = require("../../validations/validation");
 const studentAuth = express.Router();
 const awsService = require("../../services/awsService");
@@ -26,6 +26,7 @@ studentAuth.post("/students/signup", async (req, res) => {
       institutionId,
       password,
       rollNo,
+      semester
     } = value;
 
     const existingStudent = await awsService.findByEmail(emailId, "students");
@@ -43,7 +44,10 @@ studentAuth.post("/students/signup", async (req, res) => {
       institutionId,
       password,
       rollNo,
+      semester
     });
+
+    await createWallet(student.studentId);      
 
     res.status(201).json({ success: true, data: student });
   } catch (err) {

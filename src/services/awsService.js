@@ -212,6 +212,48 @@ async function findByEmailId(email, tableName, emailKeyName = "emailId") {
   return res.Items?.[0] ?? null;
 }
 
+
+const createWalletTransaction = async ({
+  walletId,
+  userId,
+  type,
+  amount,
+  source,
+  referenceId,
+  description,
+  status = "COMPLETED",
+}) => {
+  try {
+    const now = new Date().toISOString();
+
+    const transaction = {
+      transactionId: "txn-" + uuidv4(),
+      walletId,
+      userId,
+      type,
+      amount,
+      source,
+      referenceId,
+      description,
+      status,
+      createdAt: now,
+    };
+
+    await dbClient.send(
+      new PutCommand({
+        TableName: "walletTransaction",
+        Item: transaction,
+        ConditionExpression: "attribute_not_exists(transactionId)",
+      })
+    );
+
+    return transaction;
+  } catch (error) {
+    console.error("Error creating wallet transaction:", error);
+    throw error;
+  }
+};
+
 module.exports = { findById, findByEmail };
 
 module.exports = {
@@ -224,4 +266,5 @@ module.exports = {
   updateInstitutionStatus,
   updatePassword,
   updateInstitutionProfile,
+  createWalletTransaction,
 };
