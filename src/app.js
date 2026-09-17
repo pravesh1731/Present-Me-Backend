@@ -41,9 +41,18 @@ app.use(cors(
     credentials: true,
   }
 ));
+
+
 app.use(express.json({ limit: '200mb' }));
 app.use(express.urlencoded({ limit: '200mb', extended: true }));
 app.use(cookieParser());
+
+app.get("/.well-known/assetlinks.json", (req, res) => {
+  res.sendFile(
+    path.join(__dirname, "public", ".well-known", "assetlinks.json")
+  );
+});
+
 
 
 app.use("/", authRouter);
@@ -68,7 +77,6 @@ app.use("/", pyqNotesRouter);
 app.use("/", verifaliaRouter);
 app.use("/", ERouter);
 
-app.use(express.static(path.join(__dirname, "public")));
 
 
 
