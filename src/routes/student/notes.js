@@ -500,69 +500,125 @@ notesRouter.post(
   }
 );
 
-notesRouter.get("/students/notes", anyAuth, async (req, res) => {
-  try {
-     const uploaderId = req.student?.studentId ?? req.teacherId?.teacherId;
+notesRouter.get(
+  "/students/notes",
+  anyAuth,
+  async (req, res) => {
+    try {
+      const uploaderId =
+        req.student?.studentId ??
+        req.teacherId?.teacherId;
 
-    const { course, department, semester, type } = req.query;
+      const {
+        course,
+        department,
+        semester,
+        type,
+      } = req.query;
 
-    if (!course || !department || !semester || !type) {
-      return res.status(400).json({
-        message: "course, department, semester and type are required",
+      if (
+        !course ||
+        !department ||
+        !semester ||
+        !type
+      ) {
+        return res.status(400).json({
+          message:
+            "course, department, semester and type are required",
+        });
+      }
+
+      // ─────────────────────────────────────
+      // Get student / teacher
+      // ─────────────────────────────────────
+
+      const studentResult = await dynamo.send(
+        new GetCommand({
+          TableName: req.student
+            ? "students"
+            : "teachers",
+
+          Key: req.student
+            ? { studentId: uploaderId }
+            : { teacherId: uploaderId },
+        }),
+      );
+
+      if (!studentResult.Item) {
+        return res.status(404).json({
+          message: "Student not found",
+        });
+      }
+
+      const institutionId =
+        studentResult.Item.institutionId;
+
+      if (!institutionId) {
+        return res.status(400).json({
+          message:
+            "Institution not found for user",
+        });
+      }
+
+      // ─────────────────────────────────────
+      // Build lookup key
+      // ─────────────────────────────────────
+
+      const notesLookupKey = [
+        institutionId,
+        course,
+        department,
+        semester,
+        type,
+      ].join("#");
+
+      // ─────────────────────────────────────
+      // Fetch approved notes
+      // Latest first
+      // ─────────────────────────────────────
+
+      const result = await dynamo.send(
+        new QueryCommand({
+          TableName: "notes",
+
+          IndexName: "notesLookupIndex",
+
+          KeyConditionExpression:
+            "notesLookupKey = :lookupKey",
+
+          FilterExpression:
+            "#status = :approved",
+
+          ExpressionAttributeNames: {
+            "#status": "status",
+          },
+
+          ExpressionAttributeValues: {
+            ":lookupKey": notesLookupKey,
+            ":approved": "approved",
+          },
+
+          ScanIndexForward: false,
+        }),
+      );
+
+      return res.status(200).json({
+        success: true,
+        count: result.Items?.length || 0,
+        data: result.Items || [],
+      });
+    } catch (error) {
+      console.error(
+        "Fetch notes error:",
+        error,
+      );
+
+      return res.status(500).json({
+        message: "Failed to fetch notes",
       });
     }
-
-    // ── Get student ──
-    const studentResult = await dynamo.send(new GetCommand({
-    TableName: req.student ? 'students' : 'teachers',
-    Key: req.student
-      ? { studentId: uploaderId }
-      : { teacherId: uploaderId },
-  }));
-
-    if (!studentResult.Item) {
-      return res.status(404).json({ message: "Student not found" });
-    }
-
-    const institutionId = studentResult.Item.institutionId;
-
-    // ── Fetch notes ──
-    const result = await dynamo.send(
-      new ScanCommand({
-        TableName: "notes",
-        FilterExpression: `
-        institutionId = :iid AND
-        course = :course AND
-        department = :department AND
-        semester = :semester AND
-        #type = :type AND
-        #status = :status
-      `,
-        ExpressionAttributeNames: {
-          "#type": "type",
-          "#status": "status",
-        },
-        ExpressionAttributeValues: {
-          ":iid": institutionId,
-          ":course": course,
-          ":department": department,
-          ":semester": semester,
-          ":type": type, // ✅ NEW FILTER
-          ":status": "approved",
-        },
-      }),
-    );
-
-    return res.status(200).json({
-      success: true,
-      count: result.Items.length,
-      data: result.Items,
-    });
-  } catch (error) {
-    console.error("Fetch notes error:", error);
-    return res.status(500).json({ message: "Failed to fetch notes" });
-  }
-});
+  },
+);
 
 notesRouter.get("/students/notes/my-uploads", anyAuth, async (req, res) => {
   try {

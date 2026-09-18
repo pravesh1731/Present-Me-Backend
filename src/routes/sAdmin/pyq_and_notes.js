@@ -851,13 +851,33 @@ pyqNotesRouter.post(
   }
 );
 
+
 pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/reject",
   async (req, res) => {
     try {
       const { noteId } = req.params;
+      const { description } = req.body;
 
       // ─────────────────────────────────────
-      // 1. Get the note
+      // 1. Validate rejection description
+      // ─────────────────────────────────────
+
+      if (
+        !description ||
+        typeof description !== "string" ||
+        !description.trim()
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Rejection description is required",
+        });
+      }
+
+      const rejectionDescription =
+        description.trim();
+
+      // ─────────────────────────────────────
+      // 2. Get the note
       // ─────────────────────────────────────
 
       const noteResult = await dbClient.send(
@@ -879,7 +899,7 @@ pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/reject",
       }
 
       // ─────────────────────────────────────
-      // 2. Only pending notes can be rejected
+      // 3. Only pending notes can be rejected
       // ─────────────────────────────────────
 
       if (note.status !== "pending") {
@@ -890,14 +910,13 @@ pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/reject",
       }
 
       // ─────────────────────────────────────
-      // 3. duplicateKey is required
+      // 4. duplicateKey is required
       // ─────────────────────────────────────
 
       if (!note.duplicateKey) {
         return res.status(500).json({
           success: false,
-          message:
-            "Note duplicate key is missing",
+          message: "Note duplicate key is missing",
         });
       }
 
@@ -905,10 +924,12 @@ pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/reject",
         new Date().toISOString();
 
       // ─────────────────────────────────────
-      // 4. Atomically:
+      // 5. Atomically:
       //
       // notes:
       // pending → rejected
+      // + rejectionDescription
+      // + rejectedAt
       //
       // noteUnique:
       // DELETE reservation
@@ -919,9 +940,8 @@ pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/reject",
       await dbClient.send(
         new TransactWriteCommand({
           TransactItems: [
-
             // ─────────────────────────────
-            // Update note status
+            // Update note
             // ─────────────────────────────
 
             {
@@ -933,7 +953,9 @@ pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/reject",
                 },
 
                 UpdateExpression:
-                  "SET #status = :rejected, rejectedAt = :rejectedAt",
+                  "SET #status = :rejected, " +
+                  "rejectedAt = :rejectedAt, " +
+                  "description = :description",
 
                 ConditionExpression:
                   "#status = :pending",
@@ -946,15 +968,16 @@ pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/reject",
                   ":pending": "pending",
                   ":rejected": "rejected",
                   ":rejectedAt": now,
+                  ":description":description,
                 },
               },
             },
 
             // ─────────────────────────────
-            // Remove duplicate reservation
+            // Delete duplicate reservation
             //
-            // This allows another user to
-            // upload the same combination.
+            // This allows another upload
+            // with the same combination.
             // ─────────────────────────────
 
             {
@@ -975,30 +998,28 @@ pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/reject",
       );
 
       // ─────────────────────────────────────
-      // 5. Success
+      // 6. Success
       // ─────────────────────────────────────
 
       return res.status(200).json({
         success: true,
-        message:
-          "Note rejected successfully",
+        message: "Note rejected successfully",
 
         data: {
           noteId,
           status: "rejected",
+          rejectionDescription,
           rejectedAt: now,
         },
       });
-
     } catch (error) {
       console.error(
         "Reject note error:",
-        error
+        error,
       );
 
       // ─────────────────────────────────────
-      // Transaction failed because another
-      // request changed the note status
+      // Transaction failed
       // ─────────────────────────────────────
 
       if (
@@ -1018,8 +1039,10 @@ pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/reject",
           "Failed to reject note",
       });
     }
-  }
+  },
 );
+
+
 
 
 
