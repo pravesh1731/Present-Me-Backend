@@ -20,7 +20,7 @@ const {
   QueryCommand,
 } = require("@aws-sdk/lib-dynamodb");
 const anyAuth = require("../../middlewares/anyAuth");
-const { docClient } = require("../../dynamoDb");
+const { docClient, dbClient } = require("../../dynamoDb");
 
 const notesRouter = express.Router();
 
@@ -61,8 +61,7 @@ const upload = multer({
 //  POST /students/notes/upload
 // ═══════════════════════════════════════════════════════════
 
-notesRouter.post(
-  "/students/notes/upload",
+notesRouter.post("/students/notes/upload",
   anyAuth,
   upload.single("file"),
   async (req, res) => {
@@ -440,8 +439,7 @@ notesRouter.post(
 );
 
 
-notesRouter.get(
-  "/students/notes",
+notesRouter.get("/students/notes",
   anyAuth,
   async (req, res) => {
     try {
@@ -704,8 +702,7 @@ notesRouter.get("/students/notes/my-uploads", anyAuth, async (req, res) => {
   }
 });
 
-notesRouter.patch(
-  "/students/notes/:noteId/download",
+notesRouter.patch("/students/notes/:noteId/download",
   anyAuth,
   async (req, res) => {
     try {
@@ -1102,5 +1099,166 @@ notesRouter.post("/withdrawal/request", anyAuth, async (req, res) => {
     });
   }
 });
+
+notesRouter.get("/wallet/balance", anyAuth, async (req, res) => {
+  try {
+    const userId =
+      req.student?.studentId ??
+      req.teacherId?.teacherId;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized user",
+      });
+    }
+
+    const walletResult = await dbClient.send(
+      new QueryCommand({
+        TableName: "wallet",
+        IndexName: "userId-index",
+        KeyConditionExpression: "userId = :userId",
+        ExpressionAttributeValues: {
+          ":userId": userId,
+        },
+        Limit: 1,
+      }),
+    );
+
+    const wallet = walletResult.Items?.[0];
+
+    if (!wallet) {
+      return res.status(404).json({
+        success: false,
+        message: "Wallet not found",
+      });
+    }
+
+    if (wallet.status !== "ACTIVE") {
+      return res.status(403).json({
+        success: false,
+        message: "Wallet is not active",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        walletId: wallet.walletId,
+        userId: wallet.userId,
+        balance: wallet.balance ?? 0,
+        currency: wallet.currency ?? "INR",
+      },
+    });
+  } catch (error) {
+    console.error("Get wallet balance error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch wallet balance",
+    });
+  }
+});
+
+notesRouter.get("/wallet/transactions",
+  anyAuth,
+  async (req, res) => {
+    try {
+      const userId =
+        req.student?.studentId ??
+        req.teacherId?.teacherId;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized user",
+        });
+      }
+
+      const result = await dbClient.send(
+        new QueryCommand({
+          TableName: "walletTransaction",
+          IndexName: "userId-createdAt-index",
+
+          KeyConditionExpression:
+            "userId = :userId",
+
+          ExpressionAttributeValues: {
+            ":userId": userId,
+          },
+
+          // Latest transactions first
+          ScanIndexForward: false,
+        }),
+      );
+
+      return res.status(200).json({
+        success: true,
+        count: result.Items?.length || 0,
+        data: result.Items || [],
+      });
+    } catch (error) {
+      console.error(
+        "Get wallet transactions error:",
+        error,
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch wallet transactions",
+      });
+    }
+  },
+);
+
+notesRouter.get("/wallet/withdrawals",anyAuth,
+  async (req, res) => {
+    try {
+      const userId =
+        req.student?.studentId ??
+        req.teacherId?.teacherId;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "Unauthorized user",
+        });
+      }
+
+      const result = await dbClient.send(
+        new QueryCommand({
+          TableName: "withdrawal",
+          IndexName: "userId-createdAt-index",
+
+          KeyConditionExpression:
+            "userId = :userId",
+
+          ExpressionAttributeValues: {
+            ":userId": userId,
+          },
+
+          // Latest withdrawal requests first
+          ScanIndexForward: false,
+        }),
+      );
+
+      return res.status(200).json({
+        success: true,
+        count: result.Items?.length || 0,
+        data: result.Items || [],
+      });
+    } catch (error) {
+      console.error(
+        "Get withdrawal requests error:",
+        error,
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch withdrawal requests",
+      });
+    }
+  },
+);
 
 module.exports = notesRouter;

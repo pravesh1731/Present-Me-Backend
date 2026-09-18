@@ -309,8 +309,7 @@ const upload = multer({
 // SUPER ADMIN UPLOAD
 // =================================================
 
-pyqNotesRouter.post(
-  "/sadmin/pyq-notes/upload",
+pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
   SAuth,
   upload.single("file"),
 
@@ -588,8 +587,7 @@ pyqNotesRouter.post(
   },
 );
 
-pyqNotesRouter.post(
-  "/sadmin/pyq-notes/:noteId/verify",
+pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/verify",
   async (req, res) => {
     try {
       const { noteId } = req.params;
