@@ -3,7 +3,7 @@ const multer = require("multer");
 const { v4: uuidv4 } = require("uuid");
 const studAuth = require("../../middlewares/student_auth");
 const tAuth = require("../../middlewares/teacherAuth");
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const {
   TransactWriteCommand,
@@ -18,9 +18,7 @@ const {
   UpdateCommand,
   QueryCommand,
 } = require("@aws-sdk/lib-dynamodb");
-const { findById } = require("../../services/awsService");
 const anyAuth = require("../../middlewares/anyAuth");
-const SAuth = require("../../middlewares/s_admin_auth");
 const { docClient } = require("../../dynamoDb");
 
 const notesRouter = express.Router();
@@ -70,6 +68,12 @@ notesRouter.post(
   anyAuth,
   upload.single("file"),
   async (req, res) => {
+    let reservedDuplicateKey = null;
+    let fileKey = null;
+    let uniqueReservationCreated = false;
+    let s3Uploaded = false;
+    let noteCreated = false;
+
     try {
       // ─────────────────────────────────────
       // 1. Get uploader ID and role
@@ -102,7 +106,7 @@ notesRouter.post(
       }
 
       // ─────────────────────────────────────
-      // 3. Validate required body fields
+      // 3. Validate required fields
       // ─────────────────────────────────────
 
       const {
@@ -127,23 +131,32 @@ notesRouter.post(
         });
       }
 
-       if (type !== "Notes" && type !== "PYQ") {
-        return res.status(400).json({
-          success: false,
-          message: "Type must be either Notes or PYQ",
-        });
-      }
+      // ─────────────────────────────────────
+      // 4. Validate type
+      // ─────────────────────────────────────
 
-      // Teacher name is required for Notes
-      if (type === "Notes" && !teacherName) {
+      if (type !== "Notes" && type !== "PYQ") {
         return res.status(400).json({
           success: false,
-          message: "Teacher name is required for Notes",
+          message:
+            "Type must be either Notes or PYQ",
         });
       }
 
       // ─────────────────────────────────────
-      // 4. Get uploader from DynamoDB
+      // 5. Teacher name required for Notes
+      // ─────────────────────────────────────
+
+      if (type === "Notes" && !teacherName) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Teacher name is required for Notes",
+        });
+      }
+
+      // ─────────────────────────────────────
+      // 6. Get uploader from DynamoDB
       // ─────────────────────────────────────
 
       const userTable =
@@ -177,7 +190,7 @@ notesRouter.post(
       const user = userResult.Item;
 
       // ─────────────────────────────────────
-      // 5. Get institution
+      // 7. Get institution
       // ─────────────────────────────────────
 
       const institutionId = user.institutionId;
@@ -185,74 +198,105 @@ notesRouter.post(
       if (!institutionId) {
         return res.status(400).json({
           success: false,
-          message: "Uploader institution not found",
-        });
-      }
-
-      
-
-      // ─────────────────────────────────────
-      // 7. Duplicate check
-      // ─────────────────────────────────────
-
-      const duplicateCheck = await dynamo.send(
-        new ScanCommand({
-          TableName: "notes",
-
-          FilterExpression: `
-            institutionId = :iid AND
-            #type = :type AND
-            semester = :semester AND
-            #year = :year AND
-            course = :course AND
-            department = :department
-          `,
-
-          ExpressionAttributeNames: {
-            "#type": "type",
-            "#year": "year",
-          },
-
-          ExpressionAttributeValues: {
-            ":iid": institutionId,
-            ":type": type,
-            ":semester": semester,
-            ":year": year,
-            ":course": course,
-            ":department": department,
-          },
-
-          Limit: 1,
-        })
-      );
-
-      // ─────────────────────────────────────
-      // 8. Duplicate found
-      // ─────────────────────────────────────
-
-      if (
-        duplicateCheck.Items &&
-        duplicateCheck.Items.length > 0
-      ) {
-        return res.status(409).json({
-          success: false,
-          isDuplicate: true,
           message:
-            "This file already exists. A Notes/PYQ of this course and department already exists.",
+            "Uploader institution not found",
         });
       }
 
       // ─────────────────────────────────────
-      // 9. Upload file to S3
+      // 8. Normalize values
       // ─────────────────────────────────────
 
-      const fileExt = req.file.originalname
-        .split(".")
-        .pop();
+      const normalize = (value) =>
+        String(value)
+          .trim()
+          .replace(/\s+/g, " ")
+          .toLowerCase();
 
-      const fileKey =
+      // ─────────────────────────────────────
+      // 9. Generate unique duplicate key
+      // ─────────────────────────────────────
+
+      const duplicateKey = [
+        institutionId,
+        normalize(type),
+        normalize(semester),
+        normalize(year),
+        normalize(course),
+        normalize(department),
+      ].join("#");
+
+      reservedDuplicateKey = duplicateKey;
+
+      // ─────────────────────────────────────
+      // 10. Generate note ID + timestamp
+      // ─────────────────────────────────────
+
+      const noteId = `note-${uuidv4()}`;
+
+      const createdAt =
+        new Date().toISOString();
+
+      // ─────────────────────────────────────
+      // 11. Reserve unique combination
+      //
+      // This replaces ScanCommand completely.
+      //
+      // Only ONE pending/approved note can
+      // own this duplicateKey.
+      // ─────────────────────────────────────
+
+      try {
+        await dynamo.send(
+          new PutCommand({
+            TableName: "noteUnique",
+
+            Item: {
+              duplicateKey,
+              noteId,
+              status: "pending",
+              createdAt,
+            },
+
+            ConditionExpression:
+              "attribute_not_exists(duplicateKey)",
+          })
+        );
+
+        uniqueReservationCreated = true;
+
+      } catch (error) {
+
+        // Another pending/approved note
+        // already owns this key.
+        if (
+          error.name ===
+          "ConditionalCheckFailedException"
+        ) {
+          return res.status(409).json({
+            success: false,
+            isDuplicate: true,
+            message:
+              "A Notes/PYQ already exists for this course, department, semester and year, Try New One",
+          });
+        }
+
+        throw error;
+      }
+
+      // ─────────────────────────────────────
+      // 12. Upload file to S3
+      // ─────────────────────────────────────
+
+      const fileExt =
+        req.file.originalname
+          .split(".")
+          .pop()
+          ?.toLowerCase() || "pdf";
+
+      fileKey =
         `study-materials/${institutionId}/` +
-        `${uploaderId}-${Date.now()}.${fileExt}`;
+        `${noteId}.${fileExt}`;
 
       await s3.send(
         new PutObjectCommand({
@@ -263,28 +307,27 @@ notesRouter.post(
         })
       );
 
+      s3Uploaded = true;
+
+      // ─────────────────────────────────────
+      // 13. Generate file URL
+      // ─────────────────────────────────────
+
       const fileUrl =
         `https://presentme-document.s3.ap-south-1.amazonaws.com/${fileKey}`;
 
       // ─────────────────────────────────────
-      // 10. Create note
-      // ─────────────────────────────────────
-
-      const noteId = `note-${uuidv4()}`;
-
-      const createdAt = new Date().toISOString();
-
-      // ─────────────────────────────────────
-      // 11. DynamoDB item
+      // 14. Create notes item
       // ─────────────────────────────────────
 
       const noteItem = {
         noteId,
+        duplicateKey,
+
         institutionId,
 
-        // Uploader information
+        // Uploader
         uploadedBy: uploaderId,
-       
 
         // Note information
         status: "pending",
@@ -294,10 +337,10 @@ notesRouter.post(
         course,
         department,
 
-        // Teacher name for Notes
+        // Teacher name only for Notes
         teacherName:
           type === "Notes"
-            ? teacherName
+            ? teacherName.trim()
             : null,
 
         // File information
@@ -308,12 +351,12 @@ notesRouter.post(
         // Downloads
         downloads: 0,
 
-        // Upload time
+        // Time
         createdAt,
       };
 
       // ─────────────────────────────────────
-      // 12. Save to DynamoDB
+      // 15. Save note
       // ─────────────────────────────────────
 
       await dynamo.send(
@@ -323,30 +366,116 @@ notesRouter.post(
         })
       );
 
+      noteCreated = true;
+
       // ─────────────────────────────────────
-      // 13. Response
+      // 16. Mark unique reservation complete
+      // ─────────────────────────────────────
+
+      await dynamo.send(
+        new UpdateCommand({
+          TableName: "noteUnique",
+
+          Key: {
+            duplicateKey,
+          },
+
+          UpdateExpression:
+            "SET #status = :status",
+
+          ExpressionAttributeNames: {
+            "#status": "status",
+          },
+
+          ExpressionAttributeValues: {
+            ":status": "pending",
+          },
+        })
+      );
+
+      // ─────────────────────────────────────
+      // 17. Success
       // ─────────────────────────────────────
 
       return res.status(201).json({
         success: true,
-        message:"Uploaded successfully. Pending approval.",
+
+        message:
+          "Uploaded successfully. Pending approval.",
 
         noteId,
 
         uploadedBy: uploaderId,
-        
 
         status: "pending",
+
         createdAt,
 
         fileUrl,
       });
 
     } catch (error) {
+
       console.error(
         "Notes upload error:",
         error
       );
+
+      // ─────────────────────────────────────
+      // CLEANUP
+      // ─────────────────────────────────────
+
+      // If S3 uploaded but notes creation
+      // failed, delete the orphaned S3 file.
+      if (
+        s3Uploaded &&
+        fileKey &&
+        !noteCreated
+      ) {
+        try {
+          await s3.send(
+            new DeleteObjectCommand({
+              Bucket: "presentme-document",
+              Key: fileKey,
+            })
+          );
+        } catch (cleanupError) {
+          console.error(
+            "S3 cleanup failed:",
+            cleanupError
+          );
+        }
+      }
+
+      // If unique reservation was created
+      // but the upload failed, release it.
+      if (
+        uniqueReservationCreated &&
+        reservedDuplicateKey &&
+        !noteCreated
+      ) {
+        try {
+          await dynamo.send(
+            new DeleteCommand({
+              TableName: "noteUnique",
+
+              Key: {
+                duplicateKey:
+                  reservedDuplicateKey,
+              },
+            })
+          );
+        } catch (cleanupError) {
+          console.error(
+            "Unique reservation cleanup failed:",
+            cleanupError
+          );
+        }
+      }
+
+      // ─────────────────────────────────────
+      // Existing PDF validation error
+      // ─────────────────────────────────────
 
       if (
         error.message?.includes("Only PDF")
@@ -357,9 +486,14 @@ notesRouter.post(
         });
       }
 
+      // ─────────────────────────────────────
+      // Generic error
+      // ─────────────────────────────────────
+
       return res.status(500).json({
         success: false,
-        message: "Failed to upload note",
+        message:
+          "Failed to upload note",
         error: error.message,
       });
     }

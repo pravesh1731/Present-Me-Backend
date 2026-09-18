@@ -588,172 +588,438 @@ pyqNotesRouter.post(
   },
 );
 
-pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/verify", async (req, res) => {
-  try {
-    const { noteId } = req.params;
-    const { amount, description } = req.body;
+pyqNotesRouter.post(
+  "/sadmin/pyq-notes/:noteId/verify",
+  async (req, res) => {
+    try {
+      const { noteId } = req.params;
+      const { amount, description } = req.body;
 
-    // 1. Validate amount
-    if (amount === undefined || typeof amount !== "number" || amount <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid amount is required",
-      });
-    }
+      // 1. Validate amount
+      if (
+        amount === undefined ||
+        typeof amount !== "number" ||
+        amount <= 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid amount is required",
+        });
+      }
 
-    // 2. Validate description
-    if (
-      !description ||
-      typeof description !== "string" ||
-      !description.trim()
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Description is required",
-      });
-    }
+      // 2. Validate description
+      if (
+        !description ||
+        typeof description !== "string" ||
+        !description.trim()
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Description is required",
+        });
+      }
 
-    // 3. Get the note
-    const noteResult = await dbClient.send(
-      new GetCommand({
-        TableName: "notes",
-        Key: {
+      // 3. Get the note
+      const noteResult = await dbClient.send(
+        new GetCommand({
+          TableName: "notes",
+          Key: {
+            noteId,
+          },
+        }),
+      );
+
+      const note = noteResult.Item;
+
+      if (!note) {
+        return res.status(404).json({
+          success: false,
+          message: "Note not found",
+        });
+      }
+
+      // 4. Check current status
+      if (note.status !== "pending") {
+        return res.status(400).json({
+          success: false,
+          message: `Note is already ${note.status}`,
+        });
+      }
+
+      console.log(
+        "Note uploadedBy:",
+        note.uploadedBy
+      );
+
+      // ─────────────────────────────────────
+      // NEW:
+      // duplicateKey should already exist on
+      // the note from the upload API.
+      // ─────────────────────────────────────
+
+      if (!note.duplicateKey) {
+        return res.status(500).json({
+          success: false,
+          message:
+            "Note duplicate key is missing",
+        });
+      }
+
+      // 5. Get student's wallet
+      const walletResult = await dbClient.send(
+        new QueryCommand({
+          TableName: "wallet",
+          IndexName: "userId-index",
+          KeyConditionExpression:
+            "userId = :userId",
+          ExpressionAttributeValues: {
+            ":userId": note.uploadedBy,
+          },
+          Limit: 1,
+        }),
+      );
+
+      const wallet = walletResult.Items?.[0];
+
+      if (!wallet) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Wallet not found for this user",
+        });
+      }
+
+      // 6. Generate transaction ID
+      const transactionId =
+        "txn-" + uuidv4();
+
+      const now =
+        new Date().toISOString();
+
+      // 7. Update note + wallet + transaction
+      //    + noteUnique atomically
+      await dbClient.send(
+        new TransactWriteCommand({
+          TransactItems: [
+
+            // ─────────────────────────────
+            // Approve note
+            // ─────────────────────────────
+
+            {
+              Update: {
+                TableName: "notes",
+                Key: {
+                  noteId,
+                },
+
+                UpdateExpression:
+                  "SET #status = :approved, approvedAt = :approvedAt, rewardAmount = :amount",
+
+                ConditionExpression:
+                  "#status = :pending",
+
+                ExpressionAttributeNames: {
+                  "#status": "status",
+                },
+
+                ExpressionAttributeValues: {
+                  ":approved": "approved",
+                  ":pending": "pending",
+                  ":amount": amount,
+                  ":approvedAt": now,
+                },
+              },
+            },
+
+            // ─────────────────────────────
+            // NEW:
+            // Keep duplicate reservation and
+            // change it to approved
+            // ─────────────────────────────
+
+            {
+              Update: {
+                TableName: "noteUnique",
+
+                Key: {
+                  duplicateKey:
+                    note.duplicateKey,
+                },
+
+                UpdateExpression:
+                  "SET #status = :approved",
+
+                ConditionExpression:
+                  "attribute_exists(duplicateKey)",
+
+                ExpressionAttributeNames: {
+                  "#status": "status",
+                },
+
+                ExpressionAttributeValues: {
+                  ":approved": "approved",
+                },
+              },
+            },
+
+            // ─────────────────────────────
+            // Add amount to wallet
+            // ─────────────────────────────
+
+            {
+              Update: {
+                TableName: "wallet",
+
+                Key: {
+                  walletId:
+                    wallet.walletId,
+                },
+
+                UpdateExpression:
+                  "SET balance = balance + :amount, updatedAt = :updatedAt",
+
+                ExpressionAttributeValues: {
+                  ":amount": amount,
+                  ":updatedAt": now,
+                },
+              },
+            },
+
+            // ─────────────────────────────
+            // Create wallet transaction
+            // ─────────────────────────────
+
+            {
+              Put: {
+                TableName:
+                  "walletTransaction",
+
+                Item: {
+                  transactionId,
+                  walletId:
+                    wallet.walletId,
+                  userId:
+                    note.uploadedBy,
+                  type: "CREDIT",
+                  amount,
+                  source:
+                    "NOTE/PYQ_REWARD",
+                  referenceId: noteId,
+                  description:
+                    description.trim(),
+                  status: "COMPLETED",
+                  createdAt: now,
+                },
+
+                ConditionExpression:
+                  "attribute_not_exists(transactionId)",
+              },
+            },
+          ],
+        }),
+      );
+
+      return res.status(200).json({
+        success: true,
+        message:
+          "Note approved and wallet credited successfully",
+
+        data: {
           noteId,
+          amount,
+          description:
+            description.trim(),
+          transactionId,
+          walletId:
+            wallet.walletId,
         },
-      }),
-    );
+      });
 
-    const note = noteResult.Item;
+    } catch (error) {
+      console.error(
+        "Verify note error:",
+        error
+      );
 
-    if (!note) {
-      return res.status(404).json({
+      return res.status(500).json({
         success: false,
-        message: "Note not found",
+        message:
+          "Failed to approve note",
       });
     }
-
-    // 4. Check current status
-    if (note.status !== "pending") {
-      return res.status(400).json({
-        success: false,
-        message: `Note is already ${note.status}`,
-      });
-    }
-
-    console.log("Note uploadedBy:", note.uploadedBy);
-
-    // 5. Get student's wallet
-    const walletResult = await dbClient.send(
-      new QueryCommand({
-        TableName: "wallet",
-        IndexName: "userId-index",
-        KeyConditionExpression: "userId = :userId",
-        ExpressionAttributeValues: {
-          ":userId": note.uploadedBy,
-        },
-        Limit: 1,
-      }),
-    );
-
-    const wallet = walletResult.Items?.[0];
-
-    if (!wallet) {
-      return res.status(404).json({
-        success: false,
-        message: "Wallet not found for this user",
-      });
-    }
-
-    // 6. Generate transaction ID
-    const transactionId = "txn-" + uuidv4();
-
-    const now = new Date().toISOString();
-
-    // 7. Update note + wallet + transaction atomically
-    await dbClient.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          // Approve note
-          {
-            Update: {
-              TableName: "notes",
-              Key: {
-                noteId,
-              },
-              UpdateExpression:
-                "SET #status = :approved, approvedAt = :approvedAt, rewardAmount = :amount",
-              ConditionExpression: "#status = :pending",
-              ExpressionAttributeNames: {
-                "#status": "status",
-              },
-              ExpressionAttributeValues: {
-                ":approved": "approved",
-                ":pending": "pending",
-                ":amount": amount,
-                ":approvedAt": now,
-              },
-            },
-          },
-
-          // Add amount to wallet
-          {
-            Update: {
-              TableName: "wallet",
-              Key: {
-                walletId: wallet.walletId,
-              },
-              UpdateExpression:
-                "SET balance = balance + :amount, updatedAt = :updatedAt",
-              ExpressionAttributeValues: {
-                ":amount": amount,
-                ":updatedAt": now,
-              },
-            },
-          },
-
-          // Create wallet transaction
-          {
-            Put: {
-              TableName: "walletTransaction",
-              Item: {
-                transactionId,
-                walletId: wallet.walletId,
-                userId: note.uploadedBy,
-                type: "CREDIT",
-                amount,
-                source: "NOTE/PYQ_REWARD",
-                referenceId: noteId,
-                description: description.trim(),
-                status: "COMPLETED",
-                createdAt: now,
-              },
-              ConditionExpression: "attribute_not_exists(transactionId)",
-            },
-          },
-        ],
-      }),
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: "Note approved and wallet credited successfully",
-      data: {
-        noteId,
-        amount,
-        description: description.trim(),
-        transactionId,
-        walletId: wallet.walletId,
-      },
-    });
-  } catch (error) {
-    console.error("Verify note error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to approve note",
-    });
   }
-});
+);
+
+pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/reject",
+  async (req, res) => {
+    try {
+      const { noteId } = req.params;
+
+      // ─────────────────────────────────────
+      // 1. Get the note
+      // ─────────────────────────────────────
+
+      const noteResult = await dbClient.send(
+        new GetCommand({
+          TableName: "notes",
+          Key: {
+            noteId,
+          },
+        }),
+      );
+
+      const note = noteResult.Item;
+
+      if (!note) {
+        return res.status(404).json({
+          success: false,
+          message: "Note not found",
+        });
+      }
+
+      // ─────────────────────────────────────
+      // 2. Only pending notes can be rejected
+      // ─────────────────────────────────────
+
+      if (note.status !== "pending") {
+        return res.status(400).json({
+          success: false,
+          message: `Note is already ${note.status}`,
+        });
+      }
+
+      // ─────────────────────────────────────
+      // 3. duplicateKey is required
+      // ─────────────────────────────────────
+
+      if (!note.duplicateKey) {
+        return res.status(500).json({
+          success: false,
+          message:
+            "Note duplicate key is missing",
+        });
+      }
+
+      const now =
+        new Date().toISOString();
+
+      // ─────────────────────────────────────
+      // 4. Atomically:
+      //
+      // notes:
+      // pending → rejected
+      //
+      // noteUnique:
+      // DELETE reservation
+      //
+      // Both succeed or both fail.
+      // ─────────────────────────────────────
+
+      await dbClient.send(
+        new TransactWriteCommand({
+          TransactItems: [
+
+            // ─────────────────────────────
+            // Update note status
+            // ─────────────────────────────
+
+            {
+              Update: {
+                TableName: "notes",
+
+                Key: {
+                  noteId,
+                },
+
+                UpdateExpression:
+                  "SET #status = :rejected, rejectedAt = :rejectedAt",
+
+                ConditionExpression:
+                  "#status = :pending",
+
+                ExpressionAttributeNames: {
+                  "#status": "status",
+                },
+
+                ExpressionAttributeValues: {
+                  ":pending": "pending",
+                  ":rejected": "rejected",
+                  ":rejectedAt": now,
+                },
+              },
+            },
+
+            // ─────────────────────────────
+            // Remove duplicate reservation
+            //
+            // This allows another user to
+            // upload the same combination.
+            // ─────────────────────────────
+
+            {
+              Delete: {
+                TableName: "noteUnique",
+
+                Key: {
+                  duplicateKey:
+                    note.duplicateKey,
+                },
+
+                ConditionExpression:
+                  "attribute_exists(duplicateKey)",
+              },
+            },
+          ],
+        }),
+      );
+
+      // ─────────────────────────────────────
+      // 5. Success
+      // ─────────────────────────────────────
+
+      return res.status(200).json({
+        success: true,
+        message:
+          "Note rejected successfully",
+
+        data: {
+          noteId,
+          status: "rejected",
+          rejectedAt: now,
+        },
+      });
+
+    } catch (error) {
+      console.error(
+        "Reject note error:",
+        error
+      );
+
+      // ─────────────────────────────────────
+      // Transaction failed because another
+      // request changed the note status
+      // ─────────────────────────────────────
+
+      if (
+        error.name ===
+        "TransactionCanceledException"
+      ) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "Note could not be rejected because its status was changed. Please refresh and try again.",
+        });
+      }
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Failed to reject note",
+      });
+    }
+  }
+);
 
 
 
