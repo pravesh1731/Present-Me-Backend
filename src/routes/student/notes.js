@@ -61,7 +61,8 @@ const upload = multer({
 //  POST /students/notes/upload
 // ═══════════════════════════════════════════════════════════
 
-notesRouter.post("/students/notes/upload",
+notesRouter.post(
+  "/students/notes/upload",
   anyAuth,
   upload.single("file"),
   async (req, res) => {
@@ -187,14 +188,20 @@ notesRouter.post("/students/notes/upload",
       // 9. Generate unique duplicate key
       // ─────────────────────────────────────
 
-      const duplicateKey = [
+      const duplicateKeyParts = [
         institutionId,
         normalize(type),
         normalize(semester),
         normalize(year),
         normalize(course),
         normalize(department),
-      ].join("#");
+      ];
+
+      if (type === "Notes") {
+        duplicateKeyParts.push(normalize(teacherName));
+      }
+
+      const duplicateKey = duplicateKeyParts.join("#");
 
       const notesLookupKey = [
         institutionId,
@@ -438,242 +445,193 @@ notesRouter.post("/students/notes/upload",
   },
 );
 
+notesRouter.get("/students/notes", anyAuth, async (req, res) => {
+  try {
+    const uploaderId = req.student?.studentId ?? req.teacherId?.teacherId;
 
-notesRouter.get("/students/notes",
-  anyAuth,
-  async (req, res) => {
-    try {
-      const uploaderId =
-        req.student?.studentId ??
-        req.teacherId?.teacherId;
+    const { course, department, semester, type } = req.query;
 
-      const {
-        course,
-        department,
-        semester,
-        type,
-      } = req.query;
-
-      if (
-        !course ||
-        !department ||
-        !semester ||
-        !type
-      ) {
-        return res.status(400).json({
-          message:
-            "course, department, semester and type are required",
-        });
-      }
-
-      // ─────────────────────────────────────
-      // Get student / teacher
-      // ─────────────────────────────────────
-
-      const studentResult = await dynamo.send(
-        new GetCommand({
-          TableName: req.student
-            ? "students"
-            : "teachers",
-
-          Key: req.student
-            ? { studentId: uploaderId }
-            : { teacherId: uploaderId },
-        }),
-      );
-
-      if (!studentResult.Item) {
-        return res.status(404).json({
-          message: "Student not found",
-        });
-      }
-
-      const institutionId =
-        studentResult.Item.institutionId;
-
-      if (!institutionId) {
-        return res.status(400).json({
-          message:
-            "Institution not found for user",
-        });
-      }
-
-      // ─────────────────────────────────────
-      // Build lookup key
-      // ─────────────────────────────────────
-
-      const notesLookupKey = [
-        institutionId,
-        course,
-        department,
-        semester,
-        type,
-      ].join("#");
-
-      // ─────────────────────────────────────
-      // Fetch approved notes
-      // Latest first
-      // ─────────────────────────────────────
-
-      const result = await dynamo.send(
-        new QueryCommand({
-          TableName: "notes",
-
-          IndexName: "notesLookupIndex",
-
-          KeyConditionExpression:
-            "notesLookupKey = :lookupKey",
-
-          FilterExpression:
-            "#status = :approved",
-
-          ExpressionAttributeNames: {
-            "#status": "status",
-          },
-
-          ExpressionAttributeValues: {
-            ":lookupKey": notesLookupKey,
-            ":approved": "approved",
-          },
-
-          ScanIndexForward: false,
-        }),
-      );
-
-      const notes = result.Items || [];
-
-      // ─────────────────────────────────────
-      // Get uploader firstName + lastName
-      // from students / teachers
-      // ─────────────────────────────────────
-
-      const notesWithUploaderName =
-        await Promise.all(
-          notes.map(async (note) => {
-            if (!note.uploadedBy) {
-              return {
-                ...note,
-                uploadedByName: null,
-              };
-            }
-
-            try {
-              // ─────────────────────────
-              // Check students
-              // ─────────────────────────
-
-              const studentUploader =
-                await dynamo.send(
-                  new GetCommand({
-                    TableName: "students",
-
-                    Key: {
-                      studentId:
-                        note.uploadedBy,
-                    },
-                  }),
-                );
-
-              if (studentUploader.Item) {
-                const student =
-                  studentUploader.Item;
-
-                const uploadedByName = [
-                  student.firstName,
-                  student.lastName,
-                ]
-                  .filter(Boolean)
-                  .join(" ");
-
-                return {
-                  ...note,
-                  uploadedByName:
-                    uploadedByName ||
-                    "Unknown",
-                };
-              }
-
-              // ─────────────────────────
-              // If not student, check teacher
-              // ─────────────────────────
-
-              const teacherUploader =
-                await dynamo.send(
-                  new GetCommand({
-                    TableName: "teachers",
-
-                    Key: {
-                      teacherId:
-                        note.uploadedBy,
-                    },
-                  }),
-                );
-
-              if (teacherUploader.Item) {
-                const teacher =
-                  teacherUploader.Item;
-
-                const uploadedByName = [
-                  teacher.firstName,
-                  teacher.lastName,
-                ]
-                  .filter(Boolean)
-                  .join(" ");
-
-                return {
-                  ...note,
-                  uploadedByName:
-                    uploadedByName ||
-                    "Unknown",
-                };
-              }
-
-              // ─────────────────────────
-              // Uploader not found
-              // ─────────────────────────
-
-              return {
-                ...note,
-                uploadedByName: "Unknown",
-              };
-            } catch (userError) {
-              console.error(
-                "Failed to get uploader:",
-                note.uploadedBy,
-                userError,
-              );
-
-              return {
-                ...note,
-                uploadedByName: "Unknown",
-              };
-            }
-          }),
-        );
-
-      // ─────────────────────────────────────
-      // Response
-      // ─────────────────────────────────────
-
-      return res.status(200).json({
-        success: true,
-        count: notesWithUploaderName.length,
-        data: notesWithUploaderName,
-      });
-    } catch (error) {
-      console.error(
-        "Fetch notes error:",
-        error,
-      );
-
-      return res.status(500).json({
-        message:
-          "Failed to fetch notes",
+    if (!course || !department || !semester || !type) {
+      return res.status(400).json({
+        message: "course, department, semester and type are required",
       });
     }
-  },
-);
 
+    // ─────────────────────────────────────
+    // Get student / teacher
+    // ─────────────────────────────────────
+
+    const studentResult = await dynamo.send(
+      new GetCommand({
+        TableName: req.student ? "students" : "teachers",
+
+        Key: req.student
+          ? { studentId: uploaderId }
+          : { teacherId: uploaderId },
+      }),
+    );
+
+    if (!studentResult.Item) {
+      return res.status(404).json({
+        message: "Student not found",
+      });
+    }
+
+    const institutionId = studentResult.Item.institutionId;
+
+    if (!institutionId) {
+      return res.status(400).json({
+        message: "Institution not found for user",
+      });
+    }
+
+    // ─────────────────────────────────────
+    // Build lookup key
+    // ─────────────────────────────────────
+
+    const notesLookupKey = [
+      institutionId,
+      course,
+      department,
+      semester,
+      type,
+    ].join("#");
+
+    // ─────────────────────────────────────
+    // Fetch approved notes
+    // Latest first
+    // ─────────────────────────────────────
+
+    const result = await dynamo.send(
+      new QueryCommand({
+        TableName: "notes",
+
+        IndexName: "notesLookupIndex",
+
+        KeyConditionExpression: "notesLookupKey = :lookupKey",
+
+        FilterExpression: "#status = :approved",
+
+        ExpressionAttributeNames: {
+          "#status": "status",
+        },
+
+        ExpressionAttributeValues: {
+          ":lookupKey": notesLookupKey,
+          ":approved": "approved",
+        },
+
+        ScanIndexForward: false,
+      }),
+    );
+
+    const notes = result.Items || [];
+
+    // ─────────────────────────────────────
+    // Get uploader firstName + lastName
+    // from students / teachers
+    // ─────────────────────────────────────
+
+    const notesWithUploaderName = await Promise.all(
+      notes.map(async (note) => {
+        if (!note.uploadedBy) {
+          return {
+            ...note,
+            uploadedByName: null,
+          };
+        }
+
+        try {
+          // ─────────────────────────
+          // Check students
+          // ─────────────────────────
+
+          const studentUploader = await dynamo.send(
+            new GetCommand({
+              TableName: "students",
+
+              Key: {
+                studentId: note.uploadedBy,
+              },
+            }),
+          );
+
+          if (studentUploader.Item) {
+            const student = studentUploader.Item;
+
+            const uploadedByName = [student.firstName, student.lastName]
+              .filter(Boolean)
+              .join(" ");
+
+            return {
+              ...note,
+              uploadedByName: uploadedByName || "Unknown",
+            };
+          }
+
+          // ─────────────────────────
+          // If not student, check teacher
+          // ─────────────────────────
+
+          const teacherUploader = await dynamo.send(
+            new GetCommand({
+              TableName: "teachers",
+
+              Key: {
+                teacherId: note.uploadedBy,
+              },
+            }),
+          );
+
+          if (teacherUploader.Item) {
+            const teacher = teacherUploader.Item;
+
+            const uploadedByName = [teacher.firstName, teacher.lastName]
+              .filter(Boolean)
+              .join(" ");
+
+            return {
+              ...note,
+              uploadedByName: uploadedByName || "Unknown",
+            };
+          }
+
+          // ─────────────────────────
+          // Uploader not found
+          // ─────────────────────────
+
+          return {
+            ...note,
+            uploadedByName: "Unknown",
+          };
+        } catch (userError) {
+          console.error("Failed to get uploader:", note.uploadedBy, userError);
+
+          return {
+            ...note,
+            uploadedByName: "Unknown",
+          };
+        }
+      }),
+    );
+
+    // ─────────────────────────────────────
+    // Response
+    // ─────────────────────────────────────
+
+    return res.status(200).json({
+      success: true,
+      count: notesWithUploaderName.length,
+      data: notesWithUploaderName,
+    });
+  } catch (error) {
+    console.error("Fetch notes error:", error);
+
+    return res.status(500).json({
+      message: "Failed to fetch notes",
+    });
+  }
+});
 
 notesRouter.get("/students/notes/my-uploads", anyAuth, async (req, res) => {
   try {
@@ -702,7 +660,8 @@ notesRouter.get("/students/notes/my-uploads", anyAuth, async (req, res) => {
   }
 });
 
-notesRouter.patch("/students/notes/:noteId/download",
+notesRouter.patch(
+  "/students/notes/:noteId/download",
   anyAuth,
   async (req, res) => {
     try {
@@ -1102,9 +1061,7 @@ notesRouter.post("/withdrawal/request", anyAuth, async (req, res) => {
 
 notesRouter.get("/wallet/balance", anyAuth, async (req, res) => {
   try {
-    const userId =
-      req.student?.studentId ??
-      req.teacherId?.teacherId;
+    const userId = req.student?.studentId ?? req.teacherId?.teacherId;
 
     if (!userId) {
       return res.status(401).json({
@@ -1160,105 +1117,88 @@ notesRouter.get("/wallet/balance", anyAuth, async (req, res) => {
   }
 });
 
-notesRouter.get("/wallet/transactions",
-  anyAuth,
-  async (req, res) => {
-    try {
-      const userId =
-        req.student?.studentId ??
-        req.teacherId?.teacherId;
+notesRouter.get("/wallet/transactions", anyAuth, async (req, res) => {
+  try {
+    const userId = req.student?.studentId ?? req.teacherId?.teacherId;
 
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: "Unauthorized user",
-        });
-      }
-
-      const result = await dbClient.send(
-        new QueryCommand({
-          TableName: "walletTransaction",
-          IndexName: "userId-createdAt-index",
-
-          KeyConditionExpression:
-            "userId = :userId",
-
-          ExpressionAttributeValues: {
-            ":userId": userId,
-          },
-
-          // Latest transactions first
-          ScanIndexForward: false,
-        }),
-      );
-
-      return res.status(200).json({
-        success: true,
-        count: result.Items?.length || 0,
-        data: result.Items || [],
-      });
-    } catch (error) {
-      console.error(
-        "Get wallet transactions error:",
-        error,
-      );
-
-      return res.status(500).json({
+    if (!userId) {
+      return res.status(401).json({
         success: false,
-        message: "Failed to fetch wallet transactions",
+        message: "Unauthorized user",
       });
     }
-  },
-);
 
-notesRouter.get("/wallet/withdrawals",anyAuth,
-  async (req, res) => {
-    try {
-      const userId =
-        req.student?.studentId ??
-        req.teacherId?.teacherId;
+    const result = await dbClient.send(
+      new QueryCommand({
+        TableName: "walletTransaction",
+        IndexName: "userId-createdAt-index",
 
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: "Unauthorized user",
-        });
-      }
+        KeyConditionExpression: "userId = :userId",
 
-      const result = await dbClient.send(
-        new QueryCommand({
-          TableName: "withdrawal",
-          IndexName: "userId-createdAt-index",
+        ExpressionAttributeValues: {
+          ":userId": userId,
+        },
 
-          KeyConditionExpression:
-            "userId = :userId",
+        // Latest transactions first
+        ScanIndexForward: false,
+      }),
+    );
 
-          ExpressionAttributeValues: {
-            ":userId": userId,
-          },
+    return res.status(200).json({
+      success: true,
+      count: result.Items?.length || 0,
+      data: result.Items || [],
+    });
+  } catch (error) {
+    console.error("Get wallet transactions error:", error);
 
-          // Latest withdrawal requests first
-          ScanIndexForward: false,
-        }),
-      );
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch wallet transactions",
+    });
+  }
+});
 
-      return res.status(200).json({
-        success: true,
-        count: result.Items?.length || 0,
-        data: result.Items || [],
-      });
-    } catch (error) {
-      console.error(
-        "Get withdrawal requests error:",
-        error,
-      );
+notesRouter.get("/wallet/withdrawals", anyAuth, async (req, res) => {
+  try {
+    const userId = req.student?.studentId ?? req.teacherId?.teacherId;
 
-      return res.status(500).json({
+    if (!userId) {
+      return res.status(401).json({
         success: false,
-        message: "Failed to fetch withdrawal requests",
+        message: "Unauthorized user",
       });
     }
-  },
-);
+
+    const result = await dbClient.send(
+      new QueryCommand({
+        TableName: "withdrawal",
+        IndexName: "userId-createdAt-index",
+
+        KeyConditionExpression: "userId = :userId",
+
+        ExpressionAttributeValues: {
+          ":userId": userId,
+        },
+
+        // Latest withdrawal requests first
+        ScanIndexForward: false,
+      }),
+    );
+
+    return res.status(200).json({
+      success: true,
+      count: result.Items?.length || 0,
+      data: result.Items || [],
+    });
+  } catch (error) {
+    console.error("Get withdrawal requests error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch withdrawal requests",
+    });
+  }
+});
 
 module.exports = notesRouter;
