@@ -140,88 +140,92 @@ pyqNotesRouter.get("/sadmin/pyq-notes", SAuth, async (req, res) => {
     const notes = result.Items || [];
 
     // --------------------------------
-    // GET UPLOADER INFORMATION
-    // --------------------------------
+      // GET UPLOADER INFORMATION
+      // --------------------------------
 
-    const data = await Promise.all(
-      notes.map(async (note) => {
-        const uploadedBy = note.uploadedBy;
+      const data = await Promise.all(
+        notes.map(async (note) => {
+          const uploadedBy = note.uploadedBy;
 
-        let uploaderName = "Super Admin";
-        let uploaderRole = "super_admin";
+          let uploaderName = "Super Admin";
+          let uploaderRole = "super_admin";
 
-        // --------------------------------
-        // 1. SEARCH STUDENT
-        // --------------------------------
+          // --------------------------------
+          // 1. SEARCH STUDENT
+          // --------------------------------
 
-        const studentResult = await docClient.send(
-          new GetCommand({
-            TableName: "students",
-            Key: {
-              studentId: uploadedBy,
-            },
-          }),
-        );
+          const studentResult = await docClient.send(
+            new GetCommand({
+              TableName: "students",
+              Key: {
+                studentId: uploadedBy,
+              },
+            })
+          );
 
-        if (studentResult.Item) {
-          const student = studentResult.Item;
+          if (studentResult.Item) {
+            const student = studentResult.Item;
 
-          uploaderName =
-            `${student.firstName || ""} ${student.lastName || ""}`.trim() ||
-            student.name ||
-            "Unknown Student";
+            uploaderName =
+              `${student.firstName || ""} ${
+                student.lastName || ""
+              }`.trim() ||
+              student.name ||
+              "Unknown Student";
 
-          uploaderRole = "student";
+            uploaderRole = "student";
+
+            return {
+              ...note,
+              uploaderName,
+              uploaderRole,
+            };
+          }
+
+          // --------------------------------
+          // 2. SEARCH TEACHER
+          // --------------------------------
+
+          const teacherResult = await docClient.send(
+            new GetCommand({
+              TableName: "teachers",
+              Key: {
+                teacherId: uploadedBy,
+              },
+            })
+          );
+
+          if (teacherResult.Item) {
+            const teacher = teacherResult.Item;
+
+            uploaderName =
+              `${teacher.firstName || ""} ${
+                teacher.lastName || ""
+              }`.trim() ||
+              teacher.name ||
+              "Unknown Teacher";
+
+            uploaderRole = "teacher";
+
+            return {
+              ...note,
+              uploaderName,
+              uploaderRole,
+            };
+          }
+
+          // --------------------------------
+          // 3. NOT STUDENT / TEACHER
+          //    => ADMIN
+          // --------------------------------
 
           return {
             ...note,
-            uploaderName,
-            uploaderRole,
+            uploaderName: "Super Admin",
+            uploaderRole: "super_admin",
           };
-        }
-
-        // --------------------------------
-        // 2. SEARCH TEACHER
-        // --------------------------------
-
-        const teacherResult = await docClient.send(
-          new GetCommand({
-            TableName: "teachers",
-            Key: {
-              teacherId: uploadedBy,
-            },
-          }),
-        );
-
-        if (teacherResult.Item) {
-          const teacher = teacherResult.Item;
-
-          uploaderName =
-            `${teacher.firstName || ""} ${teacher.lastName || ""}`.trim() ||
-            teacher.name ||
-            "Unknown Teacher";
-
-          uploaderRole = "teacher";
-
-          return {
-            ...note,
-            uploaderName,
-            uploaderRole,
-          };
-        }
-
-        // --------------------------------
-        // 3. NOT STUDENT / TEACHER
-        //    => ADMIN
-        // --------------------------------
-
-        return {
-          ...note,
-          uploaderName: "Super Admin",
-          uploaderRole: "super_admin",
-        };
-      }),
-    );
+        })
+      );
 
     // --------------------------------
     // CREATE NEXT CURSOR
@@ -305,8 +309,7 @@ const upload = multer({
 // SUPER ADMIN UPLOAD
 // =================================================
 
-pyqNotesRouter.post(
-  "/sadmin/pyq-notes/upload",
+pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
   SAuth,
   upload.single("file"),
 
@@ -350,6 +353,8 @@ pyqNotesRouter.post(
           message: "Admin not found",
         });
       }
+
+    
 
       // =================================================
       // 3. FILE VALIDATION
@@ -510,6 +515,7 @@ pyqNotesRouter.post(
 
         // Super Admin
         uploadedBy: uploaderId,
+       
 
         // Automatically approved
         status: "approved",
@@ -581,880 +587,963 @@ pyqNotesRouter.post(
   },
 );
 
-pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/verify", async (req, res) => {
-  try {
-    const { noteId } = req.params;
-    const { amount, description } = req.body;
+pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/verify",
+  async (req, res) => {
+    try {
+      const { noteId } = req.params;
+      const { amount, description } = req.body;
 
-    // 1. Validate amount
-    if (amount === undefined || typeof amount !== "number" || amount <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid amount is required",
-      });
-    }
+      // 1. Validate amount
+      if (
+        amount === undefined ||
+        typeof amount !== "number" ||
+        amount <= 0
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Valid amount is required",
+        });
+      }
 
-    // 2. Validate description
-    if (
-      !description ||
-      typeof description !== "string" ||
-      !description.trim()
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Description is required",
-      });
-    }
+      // 2. Validate description
+      if (
+        !description ||
+        typeof description !== "string" ||
+        !description.trim()
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Description is required",
+        });
+      }
 
-    // 3. Get the note
-    const noteResult = await dbClient.send(
-      new GetCommand({
-        TableName: "notes",
-        Key: {
+      // 3. Get the note
+      const noteResult = await dbClient.send(
+        new GetCommand({
+          TableName: "notes",
+          Key: {
+            noteId,
+          },
+        }),
+      );
+
+      const note = noteResult.Item;
+
+      if (!note) {
+        return res.status(404).json({
+          success: false,
+          message: "Note not found",
+        });
+      }
+
+      // 4. Check current status
+      if (note.status !== "pending") {
+        return res.status(400).json({
+          success: false,
+          message: `Note is already ${note.status}`,
+        });
+      }
+
+      console.log(
+        "Note uploadedBy:",
+        note.uploadedBy
+      );
+
+      // ─────────────────────────────────────
+      // NEW:
+      // duplicateKey should already exist on
+      // the note from the upload API.
+      // ─────────────────────────────────────
+
+      if (!note.duplicateKey) {
+        return res.status(500).json({
+          success: false,
+          message:
+            "Note duplicate key is missing",
+        });
+      }
+
+      // 5. Get student's wallet
+      const walletResult = await dbClient.send(
+        new QueryCommand({
+          TableName: "wallet",
+          IndexName: "userId-index",
+          KeyConditionExpression:
+            "userId = :userId",
+          ExpressionAttributeValues: {
+            ":userId": note.uploadedBy,
+          },
+          Limit: 1,
+        }),
+      );
+
+      const wallet = walletResult.Items?.[0];
+
+      if (!wallet) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Wallet not found for this user",
+        });
+      }
+
+      // 6. Generate transaction ID
+      const transactionId =
+        "txn-" + uuidv4();
+
+      const now =
+        new Date().toISOString();
+
+      // 7. Update note + wallet + transaction
+      //    + noteUnique atomically
+      await dbClient.send(
+        new TransactWriteCommand({
+          TransactItems: [
+
+            // ─────────────────────────────
+            // Approve note
+            // ─────────────────────────────
+
+            {
+              Update: {
+                TableName: "notes",
+                Key: {
+                  noteId,
+                },
+
+                UpdateExpression:
+                  "SET #status = :approved, approvedAt = :approvedAt, rewardAmount = :amount",
+
+                ConditionExpression:
+                  "#status = :pending",
+
+                ExpressionAttributeNames: {
+                  "#status": "status",
+                },
+
+                ExpressionAttributeValues: {
+                  ":approved": "approved",
+                  ":pending": "pending",
+                  ":amount": amount,
+                  ":approvedAt": now,
+                },
+              },
+            },
+
+            // ─────────────────────────────
+            // NEW:
+            // Keep duplicate reservation and
+            // change it to approved
+            // ─────────────────────────────
+
+            {
+              Update: {
+                TableName: "noteUnique",
+
+                Key: {
+                  duplicateKey:
+                    note.duplicateKey,
+                },
+
+                UpdateExpression:
+                  "SET #status = :approved",
+
+                ConditionExpression:
+                  "attribute_exists(duplicateKey)",
+
+                ExpressionAttributeNames: {
+                  "#status": "status",
+                },
+
+                ExpressionAttributeValues: {
+                  ":approved": "approved",
+                },
+              },
+            },
+
+            // ─────────────────────────────
+            // Add amount to wallet
+            // ─────────────────────────────
+
+            {
+              Update: {
+                TableName: "wallet",
+
+                Key: {
+                  walletId:
+                    wallet.walletId,
+                },
+
+                UpdateExpression:
+                  "SET balance = balance + :amount, updatedAt = :updatedAt",
+
+                ExpressionAttributeValues: {
+                  ":amount": amount,
+                  ":updatedAt": now,
+                },
+              },
+            },
+
+            // ─────────────────────────────
+            // Create wallet transaction
+            // ─────────────────────────────
+
+            {
+              Put: {
+                TableName:
+                  "walletTransaction",
+
+                Item: {
+                  transactionId,
+                  walletId:
+                    wallet.walletId,
+                  userId:
+                    note.uploadedBy,
+                  type: "CREDIT",
+                  amount,
+                  source:
+                    "NOTE/PYQ_REWARD",
+                  referenceId: noteId,
+                  description:
+                    description.trim(),
+                  status: "COMPLETED",
+                  createdAt: now,
+                },
+
+                ConditionExpression:
+                  "attribute_not_exists(transactionId)",
+              },
+            },
+          ],
+        }),
+      );
+
+      return res.status(200).json({
+        success: true,
+        message:
+          "Note approved and wallet credited successfully",
+
+        data: {
           noteId,
+          amount,
+          description:
+            description.trim(),
+          transactionId,
+          walletId:
+            wallet.walletId,
         },
-      }),
-    );
-
-    const note = noteResult.Item;
-
-    if (!note) {
-      return res.status(404).json({
-        success: false,
-        message: "Note not found",
       });
-    }
 
-    // 4. Check current status
-    if (note.status !== "pending") {
-      return res.status(400).json({
-        success: false,
-        message: `Note is already ${note.status}`,
-      });
-    }
+    } catch (error) {
+      console.error(
+        "Verify note error:",
+        error
+      );
 
-    console.log("Note uploadedBy:", note.uploadedBy);
-
-    // ─────────────────────────────────────
-    // NEW:
-    // duplicateKey should already exist on
-    // the note from the upload API.
-    // ─────────────────────────────────────
-
-    if (!note.duplicateKey) {
       return res.status(500).json({
-        success: false,
-        message: "Note duplicate key is missing",
-      });
-    }
-
-    // 5. Get student's wallet
-    const walletResult = await dbClient.send(
-      new QueryCommand({
-        TableName: "wallet",
-        IndexName: "userId-index",
-        KeyConditionExpression: "userId = :userId",
-        ExpressionAttributeValues: {
-          ":userId": note.uploadedBy,
-        },
-        Limit: 1,
-      }),
-    );
-
-    const wallet = walletResult.Items?.[0];
-
-    if (!wallet) {
-      return res.status(404).json({
-        success: false,
-        message: "Wallet not found for this user",
-      });
-    }
-
-    // 6. Generate transaction ID
-    const transactionId = "txn-" + uuidv4();
-
-    const now = new Date().toISOString();
-
-    // 7. Update note + wallet + transaction
-    //    + noteUnique atomically
-    await dbClient.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          // ─────────────────────────────
-          // Approve note
-          // ─────────────────────────────
-
-          {
-            Update: {
-              TableName: "notes",
-              Key: {
-                noteId,
-              },
-
-              UpdateExpression:
-                "SET #status = :approved, approvedAt = :approvedAt, rewardAmount = :amount",
-
-              ConditionExpression: "#status = :pending",
-
-              ExpressionAttributeNames: {
-                "#status": "status",
-              },
-
-              ExpressionAttributeValues: {
-                ":approved": "approved",
-                ":pending": "pending",
-                ":amount": amount,
-                ":approvedAt": now,
-              },
-            },
-          },
-
-          // ─────────────────────────────
-          // NEW:
-          // Keep duplicate reservation and
-          // change it to approved
-          // ─────────────────────────────
-
-          {
-            Update: {
-              TableName: "noteUnique",
-
-              Key: {
-                duplicateKey: note.duplicateKey,
-              },
-
-              UpdateExpression: "SET #status = :approved",
-
-              ConditionExpression: "attribute_exists(duplicateKey)",
-
-              ExpressionAttributeNames: {
-                "#status": "status",
-              },
-
-              ExpressionAttributeValues: {
-                ":approved": "approved",
-              },
-            },
-          },
-
-          // ─────────────────────────────
-          // Add amount to wallet
-          // ─────────────────────────────
-
-          {
-            Update: {
-              TableName: "wallet",
-
-              Key: {
-                walletId: wallet.walletId,
-              },
-
-              UpdateExpression:
-                "SET balance = balance + :amount, updatedAt = :updatedAt",
-
-              ExpressionAttributeValues: {
-                ":amount": amount,
-                ":updatedAt": now,
-              },
-            },
-          },
-
-          // ─────────────────────────────
-          // Create wallet transaction
-          // ─────────────────────────────
-
-          {
-            Put: {
-              TableName: "walletTransaction",
-
-              Item: {
-                transactionId,
-                walletId: wallet.walletId,
-                userId: note.uploadedBy,
-                type: "CREDIT",
-                amount,
-                source: "NOTE/PYQ_REWARD",
-                referenceId: noteId,
-                description: description.trim(),
-                status: "COMPLETED",
-                createdAt: now,
-              },
-
-              ConditionExpression: "attribute_not_exists(transactionId)",
-            },
-          },
-        ],
-      }),
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: "Note approved and wallet credited successfully",
-
-      data: {
-        noteId,
-        amount,
-        description: description.trim(),
-        transactionId,
-        walletId: wallet.walletId,
-      },
-    });
-  } catch (error) {
-    console.error("Verify note error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to approve note",
-    });
-  }
-});
-
-pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/reject", async (req, res) => {
-  try {
-    const { noteId } = req.params;
-    const { description } = req.body;
-
-    // ─────────────────────────────────────
-    // 1. Validate rejection description
-    // ─────────────────────────────────────
-
-    if (
-      !description ||
-      typeof description !== "string" ||
-      !description.trim()
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Rejection description is required",
-      });
-    }
-
-    const rejectionDescription = description.trim();
-
-    // ─────────────────────────────────────
-    // 2. Get the note
-    // ─────────────────────────────────────
-
-    const noteResult = await dbClient.send(
-      new GetCommand({
-        TableName: "notes",
-        Key: {
-          noteId,
-        },
-      }),
-    );
-
-    const note = noteResult.Item;
-
-    if (!note) {
-      return res.status(404).json({
-        success: false,
-        message: "Note not found",
-      });
-    }
-
-    // ─────────────────────────────────────
-    // 3. Only pending notes can be rejected
-    // ─────────────────────────────────────
-
-    if (note.status !== "pending") {
-      return res.status(400).json({
-        success: false,
-        message: `Note is already ${note.status}`,
-      });
-    }
-
-    // ─────────────────────────────────────
-    // 4. duplicateKey is required
-    // ─────────────────────────────────────
-
-    if (!note.duplicateKey) {
-      return res.status(500).json({
-        success: false,
-        message: "Note duplicate key is missing",
-      });
-    }
-
-    const now = new Date().toISOString();
-
-    // ─────────────────────────────────────
-    // 5. Atomically:
-    //
-    // notes:
-    // pending → rejected
-    // + rejectionDescription
-    // + rejectedAt
-    //
-    // noteUnique:
-    // DELETE reservation
-    //
-    // Both succeed or both fail.
-    // ─────────────────────────────────────
-
-    await dbClient.send(
-      new TransactWriteCommand({
-        TransactItems: [
-          // ─────────────────────────────
-          // Update note
-          // ─────────────────────────────
-
-          {
-            Update: {
-              TableName: "notes",
-
-              Key: {
-                noteId,
-              },
-
-              UpdateExpression:
-                "SET #status = :rejected, " +
-                "rejectedAt = :rejectedAt, " +
-                "description = :description",
-
-              ConditionExpression: "#status = :pending",
-
-              ExpressionAttributeNames: {
-                "#status": "status",
-              },
-
-              ExpressionAttributeValues: {
-                ":pending": "pending",
-                ":rejected": "rejected",
-                ":rejectedAt": now,
-                ":description": description,
-              },
-            },
-          },
-
-          // ─────────────────────────────
-          // Delete duplicate reservation
-          //
-          // This allows another upload
-          // with the same combination.
-          // ─────────────────────────────
-
-          {
-            Delete: {
-              TableName: "noteUnique",
-
-              Key: {
-                duplicateKey: note.duplicateKey,
-              },
-
-              ConditionExpression: "attribute_exists(duplicateKey)",
-            },
-          },
-        ],
-      }),
-    );
-
-    // ─────────────────────────────────────
-    // 6. Success
-    // ─────────────────────────────────────
-
-    return res.status(200).json({
-      success: true,
-      message: "Note rejected successfully",
-
-      data: {
-        noteId,
-        status: "rejected",
-        rejectionDescription,
-        rejectedAt: now,
-      },
-    });
-  } catch (error) {
-    console.error("Reject note error:", error);
-
-    // ─────────────────────────────────────
-    // Transaction failed
-    // ─────────────────────────────────────
-
-    if (error.name === "TransactionCanceledException") {
-      return res.status(409).json({
         success: false,
         message:
-          "Note could not be rejected because its status was changed. Please refresh and try again.",
+          "Failed to approve note",
       });
     }
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to reject note",
-    });
   }
-});
+);
 
-pyqNotesRouter.get("/sadmin/withdrawals", SAuth, async (req, res) => {
-  try {
-    const {
-      status = "all",
-      userRole = "all",
-      institutionId,
-      withdrawalId,
-      userId,
-      upiId,
-      minAmount,
-      maxAmount,
-      fromDate,
-      toDate,
-      search,
-      pageSize = "50",
-      cursor,
-    } = req.query;
 
-    // ----------------------------------------
-    // PAGINATION
-    // ----------------------------------------
+pyqNotesRouter.post("/sadmin/pyq-notes/:noteId/reject",
+  async (req, res) => {
+    try {
+      const { noteId } = req.params;
+      const { description } = req.body;
 
-    let limit = parseInt(pageSize, 10);
+      // ─────────────────────────────────────
+      // 1. Validate rejection description
+      // ─────────────────────────────────────
 
-    if (isNaN(limit) || limit <= 0) {
-      limit = 50;
-    }
+      if (
+        !description ||
+        typeof description !== "string" ||
+        !description.trim()
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Rejection description is required",
+        });
+      }
 
-    if (limit > 50) {
-      limit = 50;
-    }
+      const rejectionDescription =
+        description.trim();
 
-    // ----------------------------------------
-    // VALIDATE STATUS
-    // ----------------------------------------
+      // ─────────────────────────────────────
+      // 2. Get the note
+      // ─────────────────────────────────────
 
-    const allowedStatuses = [
-      "PENDING",
-      "PROCESSING",
-      "PAID",
-      "REJECTED",
-      "FAILED",
-    ];
+      const noteResult = await dbClient.send(
+        new GetCommand({
+          TableName: "notes",
+          Key: {
+            noteId,
+          },
+        }),
+      );
 
-    if (status !== "all" && !allowedStatuses.includes(status.toUpperCase())) {
-      return res.status(400).json({
+      const note = noteResult.Item;
+
+      if (!note) {
+        return res.status(404).json({
+          success: false,
+          message: "Note not found",
+        });
+      }
+
+      // ─────────────────────────────────────
+      // 3. Only pending notes can be rejected
+      // ─────────────────────────────────────
+
+      if (note.status !== "pending") {
+        return res.status(400).json({
+          success: false,
+          message: `Note is already ${note.status}`,
+        });
+      }
+
+      // ─────────────────────────────────────
+      // 4. duplicateKey is required
+      // ─────────────────────────────────────
+
+      if (!note.duplicateKey) {
+        return res.status(500).json({
+          success: false,
+          message: "Note duplicate key is missing",
+        });
+      }
+
+      const now =
+        new Date().toISOString();
+
+      // ─────────────────────────────────────
+      // 5. Atomically:
+      //
+      // notes:
+      // pending → rejected
+      // + rejectionDescription
+      // + rejectedAt
+      //
+      // noteUnique:
+      // DELETE reservation
+      //
+      // Both succeed or both fail.
+      // ─────────────────────────────────────
+
+      await dbClient.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            // ─────────────────────────────
+            // Update note
+            // ─────────────────────────────
+
+            {
+              Update: {
+                TableName: "notes",
+
+                Key: {
+                  noteId,
+                },
+
+                UpdateExpression:
+                  "SET #status = :rejected, " +
+                  "rejectedAt = :rejectedAt, " +
+                  "description = :description",
+
+                ConditionExpression:
+                  "#status = :pending",
+
+                ExpressionAttributeNames: {
+                  "#status": "status",
+                },
+
+                ExpressionAttributeValues: {
+                  ":pending": "pending",
+                  ":rejected": "rejected",
+                  ":rejectedAt": now,
+                  ":description":description,
+                },
+              },
+            },
+
+            // ─────────────────────────────
+            // Delete duplicate reservation
+            //
+            // This allows another upload
+            // with the same combination.
+            // ─────────────────────────────
+
+            {
+              Delete: {
+                TableName: "noteUnique",
+
+                Key: {
+                  duplicateKey:
+                    note.duplicateKey,
+                },
+
+                ConditionExpression:
+                  "attribute_exists(duplicateKey)",
+              },
+            },
+          ],
+        }),
+      );
+
+      // ─────────────────────────────────────
+      // 6. Success
+      // ─────────────────────────────────────
+
+      return res.status(200).json({
+        success: true,
+        message: "Note rejected successfully",
+
+        data: {
+          noteId,
+          status: "rejected",
+          rejectionDescription,
+          rejectedAt: now,
+        },
+      });
+    } catch (error) {
+      console.error(
+        "Reject note error:",
+        error,
+      );
+
+      // ─────────────────────────────────────
+      // Transaction failed
+      // ─────────────────────────────────────
+
+      if (
+        error.name ===
+        "TransactionCanceledException"
+      ) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "Note could not be rejected because its status was changed. Please refresh and try again.",
+        });
+      }
+
+      return res.status(500).json({
         success: false,
-        message: "Invalid withdrawal status",
+        message:
+          "Failed to reject note",
       });
     }
+  },
+);
 
-    // ----------------------------------------
-    // VALIDATE USER ROLE
-    // ----------------------------------------
 
-    const allowedRoles = ["student", "teacher"];
 
-    if (userRole !== "all" && !allowedRoles.includes(userRole.toLowerCase())) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid userRole. Use student or teacher",
-      });
-    }
 
-    // ----------------------------------------
-    // BUILD FILTER
-    // ----------------------------------------
 
-    const filters = [];
+pyqNotesRouter.get("/sadmin/withdrawals",SAuth,async (req, res) => {
+    try {
+      const {
+        status = "all",
+        userRole = "all",
+        institutionId,
+        withdrawalId,
+        userId,
+        upiId,
+        minAmount,
+        maxAmount,
+        fromDate,
+        toDate,
+        search,
+        pageSize = "50",
+        cursor,
+      } = req.query;
 
-    const ExpressionAttributeNames = {};
-    const ExpressionAttributeValues = {};
+      // ----------------------------------------
+      // PAGINATION
+      // ----------------------------------------
 
-    // STATUS
-    if (status !== "all") {
-      filters.push("#status = :status");
+      let limit = parseInt(pageSize, 10);
 
-      ExpressionAttributeNames["#status"] = "status";
-      ExpressionAttributeValues[":status"] = status.toUpperCase();
-    }
+      if (isNaN(limit) || limit <= 0) {
+        limit = 50;
+      }
 
-    // USER ROLE
-    if (userRole !== "all") {
-      filters.push("#userRole = :userRole");
+      if (limit > 50) {
+        limit = 50;
+      }
 
-      ExpressionAttributeNames["#userRole"] = "userRole";
-      ExpressionAttributeValues[":userRole"] = userRole.toLowerCase();
-    }
+      // ----------------------------------------
+      // VALIDATE STATUS
+      // ----------------------------------------
 
-    // INSTITUTION
-    if (institutionId) {
-      filters.push("#institutionId = :institutionId");
+      const allowedStatuses = [
+        "PENDING",
+        "PROCESSING",
+        "PAID",
+        "REJECTED",
+        "FAILED",
+      ];
 
-      ExpressionAttributeNames["#institutionId"] = "institutionId";
-
-      ExpressionAttributeValues[":institutionId"] = institutionId;
-    }
-
-    // WITHDRAWAL ID
-    if (withdrawalId) {
-      filters.push("#withdrawalId = :withdrawalId");
-
-      ExpressionAttributeNames["#withdrawalId"] = "withdrawalId";
-
-      ExpressionAttributeValues[":withdrawalId"] = withdrawalId;
-    }
-
-    // USER ID
-    if (userId) {
-      filters.push("#userId = :userId");
-
-      ExpressionAttributeNames["#userId"] = "userId";
-
-      ExpressionAttributeValues[":userId"] = userId;
-    }
-
-    // UPI ID
-    if (upiId) {
-      filters.push("#upiId = :upiId");
-
-      ExpressionAttributeNames["#upiId"] = "upiId";
-
-      ExpressionAttributeValues[":upiId"] = upiId.trim().toLowerCase();
-    }
-
-    // MIN AMOUNT
-    if (minAmount !== undefined) {
-      const min = Number(minAmount);
-
-      if (!Number.isFinite(min) || min < 0) {
+      if (
+        status !== "all" &&
+        !allowedStatuses.includes(status.toUpperCase())
+      ) {
         return res.status(400).json({
           success: false,
-          message: "Invalid minAmount",
+          message: "Invalid withdrawal status",
         });
       }
 
-      filters.push("#amount >= :minAmount");
+      // ----------------------------------------
+      // VALIDATE USER ROLE
+      // ----------------------------------------
 
-      ExpressionAttributeNames["#amount"] = "amount";
+      const allowedRoles = ["student", "teacher"];
 
-      ExpressionAttributeValues[":minAmount"] = min;
-    }
-
-    // MAX AMOUNT
-    if (maxAmount !== undefined) {
-      const max = Number(maxAmount);
-
-      if (!Number.isFinite(max) || max < 0) {
+      if (
+        userRole !== "all" &&
+        !allowedRoles.includes(userRole.toLowerCase())
+      ) {
         return res.status(400).json({
           success: false,
-          message: "Invalid maxAmount",
+          message: "Invalid userRole. Use student or teacher",
         });
       }
 
-      filters.push("#amount <= :maxAmount");
+      // ----------------------------------------
+      // BUILD FILTER
+      // ----------------------------------------
 
-      ExpressionAttributeNames["#amount"] = "amount";
+      const filters = [];
 
-      ExpressionAttributeValues[":maxAmount"] = max;
-    }
+      const ExpressionAttributeNames = {};
+      const ExpressionAttributeValues = {};
 
-    // ----------------------------------------
-    // DATE FILTER
-    // ----------------------------------------
+      // STATUS
+      if (status !== "all") {
+        filters.push("#status = :status");
 
-    if (fromDate) {
-      const startDate = new Date(fromDate);
-
-      if (isNaN(startDate.getTime())) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid fromDate",
-        });
+        ExpressionAttributeNames["#status"] = "status";
+        ExpressionAttributeValues[":status"] =
+          status.toUpperCase();
       }
 
-      filters.push("#requestedAt >= :fromDate");
+      // USER ROLE
+      if (userRole !== "all") {
+        filters.push("#userRole = :userRole");
 
-      ExpressionAttributeNames["#requestedAt"] = "requestedAt";
-
-      ExpressionAttributeValues[":fromDate"] = startDate.toISOString();
-    }
-
-    if (toDate) {
-      const endDate = new Date(toDate);
-
-      if (isNaN(endDate.getTime())) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid toDate",
-        });
+        ExpressionAttributeNames["#userRole"] = "userRole";
+        ExpressionAttributeValues[":userRole"] =
+          userRole.toLowerCase();
       }
 
+      // INSTITUTION
+      if (institutionId) {
+        filters.push("#institutionId = :institutionId");
+
+        ExpressionAttributeNames["#institutionId"] =
+          "institutionId";
+
+        ExpressionAttributeValues[":institutionId"] =
+          institutionId;
+      }
+
+      // WITHDRAWAL ID
+      if (withdrawalId) {
+        filters.push("#withdrawalId = :withdrawalId");
+
+        ExpressionAttributeNames["#withdrawalId"] =
+          "withdrawalId";
+
+        ExpressionAttributeValues[":withdrawalId"] =
+          withdrawalId;
+      }
+
+      // USER ID
+      if (userId) {
+        filters.push("#userId = :userId");
+
+        ExpressionAttributeNames["#userId"] = "userId";
+
+        ExpressionAttributeValues[":userId"] = userId;
+      }
+
+      // UPI ID
+      if (upiId) {
+        filters.push("#upiId = :upiId");
+
+        ExpressionAttributeNames["#upiId"] = "upiId";
+
+        ExpressionAttributeValues[":upiId"] =
+          upiId.trim().toLowerCase();
+      }
+
+      // MIN AMOUNT
+      if (minAmount !== undefined) {
+        const min = Number(minAmount);
+
+        if (!Number.isFinite(min) || min < 0) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid minAmount",
+          });
+        }
+
+        filters.push("#amount >= :minAmount");
+
+        ExpressionAttributeNames["#amount"] = "amount";
+
+        ExpressionAttributeValues[":minAmount"] = min;
+      }
+
+      // MAX AMOUNT
+      if (maxAmount !== undefined) {
+        const max = Number(maxAmount);
+
+        if (!Number.isFinite(max) || max < 0) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid maxAmount",
+          });
+        }
+
+        filters.push("#amount <= :maxAmount");
+
+        ExpressionAttributeNames["#amount"] = "amount";
+
+        ExpressionAttributeValues[":maxAmount"] = max;
+      }
+
+      // ----------------------------------------
+      // DATE FILTER
+      // ----------------------------------------
+
+      if (fromDate) {
+        const startDate = new Date(fromDate);
+
+        if (isNaN(startDate.getTime())) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid fromDate",
+          });
+        }
+
+        filters.push("#requestedAt >= :fromDate");
+
+        ExpressionAttributeNames["#requestedAt"] =
+          "requestedAt";
+
+        ExpressionAttributeValues[":fromDate"] =
+          startDate.toISOString();
+      }
+
+      if (toDate) {
+        const endDate = new Date(toDate);
+
+        if (isNaN(endDate.getTime())) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid toDate",
+          });
+        }
+
+        /*
+         * If only a date is supplied, include the whole day.
+         *
+         * Example:
+         * 2026-09-17
+         *
+         * becomes:
+         * 2026-09-17T23:59:59.999Z
+         */
+
+        if (/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+          endDate.setUTCHours(23, 59, 59, 999);
+        }
+
+        filters.push("#requestedAt <= :toDate");
+
+        ExpressionAttributeNames["#requestedAt"] =
+          "requestedAt";
+
+        ExpressionAttributeValues[":toDate"] =
+          endDate.toISOString();
+      }
+
+      // ----------------------------------------
+      // SCAN PARAMS
+      // ----------------------------------------
+
+      const params = {
+        TableName: "withdrawal",
+        Limit: limit,
+      };
+
+      if (filters.length > 0) {
+        params.FilterExpression = filters.join(" AND ");
+
+        params.ExpressionAttributeNames =
+          ExpressionAttributeNames;
+
+        params.ExpressionAttributeValues =
+          ExpressionAttributeValues;
+      }
+
+      // ----------------------------------------
+      // CURSOR
+      // ----------------------------------------
+
+      if (cursor) {
+        try {
+          params.ExclusiveStartKey = JSON.parse(
+            Buffer.from(cursor, "base64").toString("utf8")
+          );
+        } catch (error) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid cursor",
+          });
+        }
+      }
+
+      // ----------------------------------------
+      // GET WITHDRAWALS
+      // ----------------------------------------
+
+      const result = await docClient.send(
+        new ScanCommand(params)
+      );
+
+      let withdrawals = result.Items || [];
+
+      // ----------------------------------------
+      // SEARCH
+      // ----------------------------------------
       /*
-       * If only a date is supplied, include the whole day.
+       * Search supports:
+       * - withdrawalId
+       * - userId
+       * - upiId
        *
-       * Example:
-       * 2026-09-17
-       *
-       * becomes:
-       * 2026-09-17T23:59:59.999Z
+       * User name is handled after fetching student/teacher.
        */
 
-      if (/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
-        endDate.setUTCHours(23, 59, 59, 999);
-      }
+      if (search && search.trim()) {
+        const searchText = search.trim().toLowerCase();
 
-      filters.push("#requestedAt <= :toDate");
-
-      ExpressionAttributeNames["#requestedAt"] = "requestedAt";
-
-      ExpressionAttributeValues[":toDate"] = endDate.toISOString();
-    }
-
-    // ----------------------------------------
-    // SCAN PARAMS
-    // ----------------------------------------
-
-    const params = {
-      TableName: "withdrawal",
-      Limit: limit,
-    };
-
-    if (filters.length > 0) {
-      params.FilterExpression = filters.join(" AND ");
-
-      params.ExpressionAttributeNames = ExpressionAttributeNames;
-
-      params.ExpressionAttributeValues = ExpressionAttributeValues;
-    }
-
-    // ----------------------------------------
-    // CURSOR
-    // ----------------------------------------
-
-    if (cursor) {
-      try {
-        params.ExclusiveStartKey = JSON.parse(
-          Buffer.from(cursor, "base64").toString("utf8"),
-        );
-      } catch (error) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid cursor",
+        withdrawals = withdrawals.filter((withdrawal) => {
+          return (
+            String(withdrawal.withdrawalId || "")
+              .toLowerCase()
+              .includes(searchText) ||
+            String(withdrawal.userId || "")
+              .toLowerCase()
+              .includes(searchText) ||
+            String(withdrawal.upiId || "")
+              .toLowerCase()
+              .includes(searchText)
+          );
         });
       }
-    }
 
-    // ----------------------------------------
-    // GET WITHDRAWALS
-    // ----------------------------------------
+      // ----------------------------------------
+      // RESOLVE USER + INSTITUTION
+      // ----------------------------------------
 
-    const result = await docClient.send(new ScanCommand(params));
+      const data = await Promise.all(
+        withdrawals.map(async (withdrawal) => {
+          let user = null;
+          let userName = "Unknown User";
+          let userEmail = null;
+          let institutionName = "Unknown Institution";
 
-    let withdrawals = result.Items || [];
+          // ------------------------------
+          // STUDENT
+          // ------------------------------
 
-    // ----------------------------------------
-    // SEARCH
-    // ----------------------------------------
-    /*
-     * Search supports:
-     * - withdrawalId
-     * - userId
-     * - upiId
-     *
-     * User name is handled after fetching student/teacher.
-     */
+          if (withdrawal.userRole === "student") {
+            const studentResult = await docClient.send(
+              new GetCommand({
+                TableName: "students",
+                Key: {
+                  studentId: withdrawal.userId,
+                },
+              })
+            );
 
-    if (search && search.trim()) {
-      const searchText = search.trim().toLowerCase();
+            user = studentResult.Item || null;
 
-      withdrawals = withdrawals.filter((withdrawal) => {
-        return (
-          String(withdrawal.withdrawalId || "")
-            .toLowerCase()
-            .includes(searchText) ||
-          String(withdrawal.userId || "")
-            .toLowerCase()
-            .includes(searchText) ||
-          String(withdrawal.upiId || "")
-            .toLowerCase()
-            .includes(searchText)
-        );
-      });
-    }
+            if (user) {
+              userName =
+                `${user.firstName || ""} ${
+                  user.lastName || ""
+                }`.trim() ||
+                user.name ||
+                "Unknown Student";
 
-    // ----------------------------------------
-    // RESOLVE USER + INSTITUTION
-    // ----------------------------------------
-
-    const data = await Promise.all(
-      withdrawals.map(async (withdrawal) => {
-        let user = null;
-        let userName = "Unknown User";
-        let userEmail = null;
-        let institutionName = "Unknown Institution";
-
-        // ------------------------------
-        // STUDENT
-        // ------------------------------
-
-        if (withdrawal.userRole === "student") {
-          const studentResult = await docClient.send(
-            new GetCommand({
-              TableName: "students",
-              Key: {
-                studentId: withdrawal.userId,
-              },
-            }),
-          );
-
-          user = studentResult.Item || null;
-
-          if (user) {
-            userName =
-              `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
-              user.name ||
-              "Unknown Student";
-
-            userEmail = user.emailId || user.email || null;
+              userEmail = user.emailId || user.email || null;
+            }
           }
-        }
 
-        // ------------------------------
-        // TEACHER
-        // ------------------------------
+          // ------------------------------
+          // TEACHER
+          // ------------------------------
 
-        if (withdrawal.userRole === "teacher") {
-          const teacherResult = await docClient.send(
-            new GetCommand({
-              TableName: "teachers",
-              Key: {
-                teacherId: withdrawal.userId,
-              },
-            }),
-          );
+          if (withdrawal.userRole === "teacher") {
+            const teacherResult = await docClient.send(
+              new GetCommand({
+                TableName: "teachers",
+                Key: {
+                  teacherId: withdrawal.userId,
+                },
+              })
+            );
 
-          user = teacherResult.Item || null;
+            user = teacherResult.Item || null;
 
-          if (user) {
-            userName =
-              `${user.firstName || ""} ${user.lastName || ""}`.trim() ||
-              user.name ||
-              "Unknown Teacher";
+            if (user) {
+              userName =
+                `${user.firstName || ""} ${
+                  user.lastName || ""
+                }`.trim() ||
+                user.name ||
+                "Unknown Teacher";
 
-            userEmail = user.emailId || user.email || null;
+              userEmail = user.emailId || user.email || null;
+            }
           }
-        }
 
-        // ------------------------------
-        // INSTITUTION
-        // ------------------------------
+          // ------------------------------
+          // INSTITUTION
+          // ------------------------------
 
-        if (withdrawal.institutionId) {
-          const institutionResult = await docClient.send(
-            new GetCommand({
-              TableName: "Institutions",
-              Key: {
-                institutionId: withdrawal.institutionId,
-              },
-            }),
-          );
+          if (withdrawal.institutionId) {
+            const institutionResult = await docClient.send(
+              new GetCommand({
+                TableName: "Institutions",
+                Key: {
+                  institutionId:withdrawal.institutionId,
+                },
+              })
+            );
 
-          if (institutionResult.Item) {
-            institutionName =
-              institutionResult.Item.name ||
-              institutionResult.Item.InstitutionName ||
-              "Unknown Institution";
+            if (institutionResult.Item) {
+              institutionName =
+                institutionResult.Item.name ||
+                institutionResult.Item.InstitutionName ||
+                "Unknown Institution";
+            }
           }
-        }
 
-        return {
-          ...withdrawal,
+          return {
+            ...withdrawal,
 
-          // Dynamic user information
-          userName,
-          userEmail,
+            // Dynamic user information
+            userName,
+            userEmail,
 
-          // Dynamic institution information
-          institutionName,
+            // Dynamic institution information
+            institutionName,
 
-          // Useful for frontend
-          userExists: !!user,
-        };
-      }),
-    );
-
-    // ----------------------------------------
-    // SEARCH BY USER NAME
-    // ----------------------------------------
-
-    let finalData = data;
-
-    if (search && search.trim()) {
-      const searchText = search.trim().toLowerCase();
-
-      finalData = data.filter((withdrawal) => {
-        return (
-          String(withdrawal.withdrawalId || "")
-            .toLowerCase()
-            .includes(searchText) ||
-          String(withdrawal.userId || "")
-            .toLowerCase()
-            .includes(searchText) ||
-          String(withdrawal.upiId || "")
-            .toLowerCase()
-            .includes(searchText) ||
-          String(withdrawal.userName || "")
-            .toLowerCase()
-            .includes(searchText)
-        );
-      });
-    }
-
-    // ----------------------------------------
-    // SORT
-    // ----------------------------------------
-    // Newest withdrawal first
-
-    finalData.sort((a, b) => {
-      return (
-        new Date(b.requestedAt || b.createdAt) -
-        new Date(a.requestedAt || a.createdAt)
+            // Useful for frontend
+            userExists: !!user,
+          };
+        })
       );
-    });
 
-    // ----------------------------------------
-    // NEXT CURSOR
-    // ----------------------------------------
+      // ----------------------------------------
+      // SEARCH BY USER NAME
+      // ----------------------------------------
 
-    let nextCursor = null;
+      let finalData = data;
 
-    if (result.LastEvaluatedKey) {
-      nextCursor = Buffer.from(
-        JSON.stringify(result.LastEvaluatedKey),
-      ).toString("base64");
+      if (search && search.trim()) {
+        const searchText = search.trim().toLowerCase();
+
+        finalData = data.filter((withdrawal) => {
+          return (
+            String(withdrawal.withdrawalId || "")
+              .toLowerCase()
+              .includes(searchText) ||
+            String(withdrawal.userId || "")
+              .toLowerCase()
+              .includes(searchText) ||
+            String(withdrawal.upiId || "")
+              .toLowerCase()
+              .includes(searchText) ||
+            String(withdrawal.userName || "")
+              .toLowerCase()
+              .includes(searchText)
+          );
+        });
+      }
+
+      // ----------------------------------------
+      // SORT
+      // ----------------------------------------
+      // Newest withdrawal first
+
+      finalData.sort((a, b) => {
+        return (
+          new Date(b.requestedAt || b.createdAt) -
+          new Date(a.requestedAt || a.createdAt)
+        );
+      });
+
+      // ----------------------------------------
+      // NEXT CURSOR
+      // ----------------------------------------
+
+      let nextCursor = null;
+
+      if (result.LastEvaluatedKey) {
+        nextCursor = Buffer.from(
+          JSON.stringify(result.LastEvaluatedKey)
+        ).toString("base64");
+      }
+
+      // ----------------------------------------
+      // RESPONSE
+      // ----------------------------------------
+
+      return res.status(200).json({
+        success: true,
+
+        count: finalData.length,
+
+        data: finalData,
+
+        nextCursor,
+      });
+    } catch (error) {
+      console.error(
+        "Get admin withdrawals error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch withdrawal requests",
+        error: error.message,
+      });
     }
-
-    // ----------------------------------------
-    // RESPONSE
-    // ----------------------------------------
-
-    return res.status(200).json({
-      success: true,
-
-      count: finalData.length,
-
-      data: finalData,
-
-      nextCursor,
-    });
-  } catch (error) {
-    console.error("Get admin withdrawals error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: "Failed to fetch withdrawal requests",
-      error: error.message,
-    });
   }
-});
+);
 
-pyqNotesRouter.patch(
-  "/sadmin/withdrawals/:withdrawalId/status",
-  SAuth,
-  async (req, res) => {
+pyqNotesRouter.patch("/sadmin/withdrawals/:withdrawalId/status",SAuth,async (req, res) => {
     try {
       const { withdrawalId } = req.params;
 
-      const { status, adminNote, paymentReferenceId, failureReason } =
-        req.body || {};
+      const {
+        status,
+        adminNote,
+        paymentReferenceId,
+        failureReason,
+      } = req.body || {};
 
       // ----------------------------------------
       // VALIDATE WITHDRAWAL ID
@@ -1471,7 +1560,12 @@ pyqNotesRouter.patch(
       // VALIDATE STATUS
       // ----------------------------------------
 
-      const allowedStatuses = ["PROCESSING", "PAID", "REJECTED", "FAILED"];
+      const allowedStatuses = [
+        "PROCESSING",
+        "PAID",
+        "REJECTED",
+        "FAILED",
+      ];
 
       const newStatus = String(status || "")
         .trim()
@@ -1480,7 +1574,8 @@ pyqNotesRouter.patch(
       if (!allowedStatuses.includes(newStatus)) {
         return res.status(400).json({
           success: false,
-          message: "Invalid status. Use PROCESSING, PAID, REJECTED or FAILED",
+          message:
+            "Invalid status. Use PROCESSING, PAID, REJECTED or FAILED",
         });
       }
 
@@ -1507,7 +1602,7 @@ pyqNotesRouter.patch(
           Key: {
             withdrawalId,
           },
-        }),
+        })
       );
 
       const withdrawal = withdrawalResult.Item;
@@ -1523,7 +1618,9 @@ pyqNotesRouter.patch(
       // CURRENT STATUS
       // ----------------------------------------
 
-      const currentStatus = String(withdrawal.status || "").toUpperCase();
+      const currentStatus = String(
+        withdrawal.status || ""
+      ).toUpperCase();
 
       // ----------------------------------------
       // PREVENT UPDATING COMPLETED REQUESTS
@@ -1561,7 +1658,8 @@ pyqNotesRouter.patch(
       ) {
         return res.status(400).json({
           success: false,
-          message: "PROCESSING withdrawal can only be moved to PAID or FAILED",
+          message:
+            "PROCESSING withdrawal can only be moved to PAID or FAILED",
         });
       }
 
@@ -1606,10 +1704,15 @@ pyqNotesRouter.patch(
       // ----------------------------------------
 
       if (newStatus === "REJECTED") {
-        if (!adminNote || typeof adminNote !== "string" || !adminNote.trim()) {
+        if (
+          !adminNote ||
+          typeof adminNote !== "string" ||
+          !adminNote.trim()
+        ) {
           return res.status(400).json({
             success: false,
-            message: "Admin note is required when rejecting withdrawal",
+            message:
+              "Admin note is required when rejecting withdrawal",
           });
         }
       }
@@ -1631,14 +1734,15 @@ pyqNotesRouter.patch(
       // CURRENT TIME
       // ----------------------------------------
 
-      const now = new Date().toLocaleString("en-IN", {
-        timeZone: "Asia/Kolkata",
-      });
+      const now = new Date().toISOString();
+
       // ----------------------------------------
       // DOES THIS REQUIRE REFUND?
       // ----------------------------------------
 
-      const shouldRefund = newStatus === "REJECTED" || newStatus === "FAILED";
+      const shouldRefund =
+        newStatus === "REJECTED" ||
+        newStatus === "FAILED";
 
       // ----------------------------------------
       // NORMAL STATUS UPDATE
@@ -1664,7 +1768,9 @@ pyqNotesRouter.patch(
 
         // PROCESSING
         if (newStatus === "PROCESSING") {
-          updateExpressionParts.push("processedAt = :processedAt");
+          updateExpressionParts.push(
+            "processedAt = :processedAt"
+          );
 
           expressionAttributeValues[":processedAt"] = now;
         }
@@ -1673,20 +1779,28 @@ pyqNotesRouter.patch(
         if (newStatus === "PAID") {
           updateExpressionParts.push(
             "paidAt = :paidAt",
-            "paymentReferenceId = :paymentReferenceId",
+            "paymentReferenceId = :paymentReferenceId"
           );
 
           expressionAttributeValues[":paidAt"] = now;
 
-          expressionAttributeValues[":paymentReferenceId"] =
-            paymentReferenceId.trim();
+          expressionAttributeValues[
+            ":paymentReferenceId"
+          ] = paymentReferenceId.trim();
         }
 
         // ADMIN NOTE
-        if (adminNote && typeof adminNote === "string" && adminNote.trim()) {
-          updateExpressionParts.push("adminNote = :adminNote");
+        if (
+          adminNote &&
+          typeof adminNote === "string" &&
+          adminNote.trim()
+        ) {
+          updateExpressionParts.push(
+            "adminNote = :adminNote"
+          );
 
-          expressionAttributeValues[":adminNote"] = adminNote.trim();
+          expressionAttributeValues[":adminNote"] =
+            adminNote.trim();
         }
 
         await docClient.send(
@@ -1700,17 +1814,22 @@ pyqNotesRouter.patch(
                     withdrawalId,
                   },
 
-                  UpdateExpression: "SET " + updateExpressionParts.join(", "),
+                  UpdateExpression:
+                    "SET " +
+                    updateExpressionParts.join(", "),
 
-                  ConditionExpression: "#status = :oldStatus",
+                  ConditionExpression:
+                    "#status = :oldStatus",
 
-                  ExpressionAttributeNames: expressionAttributeNames,
+                  ExpressionAttributeNames:
+                    expressionAttributeNames,
 
-                  ExpressionAttributeValues: expressionAttributeValues,
+                  ExpressionAttributeValues:
+                    expressionAttributeValues,
                 },
               },
             ],
-          }),
+          })
         );
 
         return res.status(200).json({
@@ -1723,7 +1842,9 @@ pyqNotesRouter.patch(
             adminId,
             updatedAt: now,
             paymentReferenceId:
-              newStatus === "PAID" ? paymentReferenceId.trim() : null,
+              newStatus === "PAID"
+                ? paymentReferenceId.trim()
+                : null,
           },
         });
       }
@@ -1739,7 +1860,7 @@ pyqNotesRouter.patch(
           Key: {
             walletId: withdrawal.walletId,
           },
-        }),
+        })
       );
 
       const wallet = walletResult.Item;
@@ -1756,9 +1877,11 @@ pyqNotesRouter.patch(
       let refundDescription;
 
       if (newStatus === "REJECTED") {
-        refundDescription = `Refund for rejected withdrawal ${withdrawalId}`;
+        refundDescription =
+          `Refund for rejected withdrawal ${withdrawalId}`;
       } else {
-        refundDescription = `Refund for failed withdrawal ${withdrawalId}`;
+        refundDescription =
+          `Refund for failed withdrawal ${withdrawalId}`;
       }
 
       // ----------------------------------------
@@ -1783,7 +1906,8 @@ pyqNotesRouter.patch(
               "adminNote = :adminNote, " +
               "failureReason = :failureReason",
 
-            ConditionExpression: "#status = :oldStatus",
+            ConditionExpression:
+              "#status = :oldStatus",
 
             ExpressionAttributeNames: {
               "#status": "status",
@@ -1795,8 +1919,11 @@ pyqNotesRouter.patch(
               ":updatedAt": now,
               ":processedAt": now,
               ":adminId": adminId,
-              ":adminNote": adminNote?.trim() || null,
-              ":failureReason": failureReason?.trim() || null,
+              ":adminNote":
+                adminNote?.trim() || null,
+              ":failureReason":
+                failureReason?.trim() ||
+                null,
             },
           },
         },
@@ -1811,9 +1938,11 @@ pyqNotesRouter.patch(
             },
 
             UpdateExpression:
-              "SET balance = balance + :amount, " + "updatedAt = :updatedAt",
+              "SET balance = balance + :amount, " +
+              "updatedAt = :updatedAt",
 
-            ConditionExpression: "attribute_exists(walletId)",
+            ConditionExpression:
+              "attribute_exists(walletId)",
 
             ExpressionAttributeValues: {
               ":amount": amount,
@@ -1849,7 +1978,8 @@ pyqNotesRouter.patch(
               createdAt: now,
             },
 
-            ConditionExpression: "attribute_not_exists(transactionId)",
+            ConditionExpression:
+              "attribute_not_exists(transactionId)",
           },
         },
       ];
@@ -1857,7 +1987,7 @@ pyqNotesRouter.patch(
       await docClient.send(
         new TransactWriteCommand({
           TransactItems: transactionItems,
-        }),
+        })
       );
 
       return res.status(200).json({
@@ -1886,7 +2016,10 @@ pyqNotesRouter.patch(
         },
       });
     } catch (error) {
-      console.error("Update withdrawal status error:", error);
+      console.error(
+        "Update withdrawal status error:",
+        error
+      );
 
       return res.status(500).json({
         success: false,
@@ -1894,7 +2027,8 @@ pyqNotesRouter.patch(
         error: error.message,
       });
     }
-  },
+  }
 );
+
 
 module.exports = pyqNotesRouter;

@@ -883,9 +883,7 @@ notesRouter.post("/withdrawal/request", anyAuth, async (req, res) => {
 
     const transactionId = `txn-${uuidv4()}`;
 
-    const now = new Date().toLocaleString("en-IN", {
-      timeZone: "Asia/Kolkata",
-    });
+    const now = new Date().toISOString();
 
     // =================================================
     // 10. TRANSACTION
