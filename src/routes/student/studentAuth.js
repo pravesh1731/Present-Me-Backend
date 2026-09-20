@@ -44,7 +44,7 @@ studentAuth.post("/students/signup", async (req, res) => {
     if (existingStudent) {
       return res
         .status(409)
-        .json({ message: "Email already exists, Register with new account" });
+        .json({ message: "Email already exists, Register with Other Email" });
     }
 
     // 2. Verify email with Verifalia

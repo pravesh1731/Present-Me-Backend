@@ -64,8 +64,41 @@ const upload = multer({
 notesRouter.post(
   "/students/notes/upload",
   anyAuth,
-  upload.single("file"),
+
+  (req, res, next) => {
+    upload.single("file")(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+
+        if (err.code === "LIMIT_FILE_SIZE" || "LIMIT_UNEXPECTED_FILE") {
+          return res.status(400).json({
+            success: false,
+            code: "FILE_TOO_LARGE",
+            message: "File size must not exceed 10 MB.",
+          });
+        }
+
+
+        return res.status(400).json({
+          success: false,
+          code: "FILE_UPLOAD_ERROR",
+          message: err.message,
+        });
+      }
+
+      if (err) {
+        return res.status(400).json({
+          success: false,
+          code: "FILE_UPLOAD_ERROR",
+          message: err.message || "Unable to upload file.",
+        });
+      }
+
+      next();
+    });
+  },
+
   async (req, res) => {
+ 
     let reservedDuplicateKey = null;
     let fileKey = null;
     let uniqueReservationCreated = false;
