@@ -40,7 +40,7 @@ const dynamo = DynamoDBDocumentClient.from(
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB max
   fileFilter: (req, file, cb) => {
     const allowed = [
       "application/pdf",
@@ -73,7 +73,7 @@ notesRouter.post(
           return res.status(400).json({
             success: false,
             code: "FILE_TOO_LARGE",
-            message: "File size must not exceed 10 MB.",
+            message: "File size must not exceed 20 MB.",
           });
         }
 
