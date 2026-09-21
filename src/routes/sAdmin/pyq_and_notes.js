@@ -7,6 +7,7 @@ const {
   GetCommand,
   TransactWriteCommand,
   QueryCommand,
+  UpdateCommand,
 } = require("@aws-sdk/lib-dynamodb");
 
 const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
@@ -309,15 +310,18 @@ const upload = multer({
 // SUPER ADMIN UPLOAD
 // =================================================
 
-pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
+pyqNotesRouter.post(
+  "/sadmin/pyq-notes/upload",
   SAuth,
 
   // =================================================
-  // MULTER ERROR HANDLING
+  // MULTER
   // =================================================
   (req, res, next) => {
     upload.single("file")(req, res, (err) => {
       if (err instanceof multer.MulterError) {
+
+        // File > 20 MB
         if (err.code === "LIMIT_FILE_SIZE") {
           return res.status(400).json({
             success: false,
@@ -326,6 +330,7 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
           });
         }
 
+        // Wrong multipart field
         if (err.code === "LIMIT_UNEXPECTED_FILE") {
           return res.status(400).json({
             success: false,
@@ -345,7 +350,8 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
         return res.status(400).json({
           success: false,
           code: "FILE_UPLOAD_ERROR",
-          message: err.message || "Unable to upload file.",
+          message:
+            err.message || "Unable to upload file.",
         });
       }
 
@@ -354,6 +360,11 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
   },
 
   async (req, res) => {
+
+    // =================================================
+    // VARIABLES FOR CLEANUP
+    // =================================================
+
     let reservedDuplicateKey = null;
     let fileKey = null;
 
@@ -362,8 +373,9 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
     let noteCreated = false;
 
     try {
+
       // =================================================
-      // 1. SUPER ADMIN
+      // 1. CHECK SUPER ADMIN
       // =================================================
 
       if (!req.admin) {
@@ -383,7 +395,7 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
       }
 
       // =================================================
-      // 2. GET ADMIN FROM ADMIN TABLE
+      // 2. GET ADMIN FROM DYNAMODB
       // =================================================
 
       const adminResult = await dynamo.send(
@@ -395,14 +407,14 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
         })
       );
 
-      const admin = adminResult.Item;
-
-      if (!admin) {
+      if (!adminResult.Item) {
         return res.status(404).json({
           success: false,
           message: "Admin not found",
         });
       }
+
+      const admin = adminResult.Item;
 
       // =================================================
       // 3. FILE VALIDATION
@@ -416,7 +428,7 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
       }
 
       // =================================================
-      // 4. BODY
+      // 4. GET FORM DATA
       // =================================================
 
       const {
@@ -428,6 +440,10 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
         institutionId,
         teacherName,
       } = req.body;
+
+      // =================================================
+      // 5. REQUIRED FIELDS
+      // =================================================
 
       if (
         !type ||
@@ -445,29 +461,39 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
       }
 
       // =================================================
-      // 5. TYPE VALIDATION
+      // 6. TYPE VALIDATION
       // =================================================
 
-      if (type !== "Notes" && type !== "PYQ") {
+      if (
+        type !== "Notes" &&
+        type !== "PYQ"
+      ) {
         return res.status(400).json({
           success: false,
-          message: "Type must be either Notes or PYQ",
+          message:
+            "Type must be either Notes or PYQ",
         });
       }
 
       // =================================================
-      // 6. TEACHER NAME
+      // 7. TEACHER NAME
+      // ONLY REQUIRED FOR NOTES
       // =================================================
 
-      if (type === "Notes" && !teacherName) {
+      if (
+        type === "Notes" &&
+        !teacherName
+      ) {
         return res.status(400).json({
           success: false,
-          message: "Teacher name is required for Notes",
+          message:
+            "Teacher name is required for Notes",
         });
       }
 
       // =================================================
-      // 7. NORMALIZE
+      // 8. NORMALIZE VALUES
+      // SAME AS STUDENT API
       // =================================================
 
       const normalize = (value) =>
@@ -477,9 +503,8 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
           .toLowerCase();
 
       // =================================================
-      // 8. GENERATE DUPLICATE KEY
-      //
-      // SAME LOGIC AS STUDENT/TEACHER API
+      // 9. CREATE DUPLICATE KEY
+      // SAME LOGIC AS STUDENT API
       // =================================================
 
       const duplicateKeyParts = [
@@ -491,19 +516,21 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
         normalize(department),
       ];
 
-      // Teacher name is part of uniqueness for Notes
+      // Notes include teacher name
       if (type === "Notes") {
-        duplicateKeyParts.push(normalize(teacherName));
+        duplicateKeyParts.push(
+          normalize(teacherName)
+        );
       }
 
-      const duplicateKey = duplicateKeyParts.join("#");
+      const duplicateKey =
+        duplicateKeyParts.join("#");
 
       reservedDuplicateKey = duplicateKey;
 
       // =================================================
-      // 9. NOTES LOOKUP KEY
-      //
-      // SAME AS STUDENT/TEACHER API
+      // 10. CREATE NOTES LOOKUP KEY
+      // SAME AS STUDENT API
       // =================================================
 
       const notesLookupKey = [
@@ -515,22 +542,22 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
       ].join("#");
 
       // =================================================
-      // 10. NOTE ID + CREATED TIME
+      // 11. NOTE ID + CREATED AT
       // =================================================
 
-      const noteId = `note-${uuidv4()}`;
+      const noteId =
+        `note-${uuidv4()}`;
 
-      const createdAt = new Date().toISOString();
+      const createdAt =
+        new Date().toISOString();
 
       // =================================================
-      // 11. RESERVE UNIQUE COMBINATION
-      //
-      // IMPORTANT:
-      // No ScanCommand.
-      // DynamoDB conditional Put prevents duplicates.
+      // 12. RESERVE UNIQUE COMBINATION
+      // SAME AS STUDENT API
       // =================================================
 
       try {
+
         await dynamo.send(
           new PutCommand({
             TableName: "noteUnique",
@@ -539,7 +566,8 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
               duplicateKey,
               noteId,
 
-              // Admin uploads are immediately approved
+              // ADMIN UPLOAD
+              // APPROVED DIRECTLY
               status: "approved",
 
               createdAt,
@@ -551,17 +579,22 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
         );
 
         uniqueReservationCreated = true;
+
       } catch (error) {
+
         // =================================================
         // DUPLICATE
         // =================================================
 
-        if (error.name === "ConditionalCheckFailedException") {
+        if (
+          error.name ===
+          "ConditionalCheckFailedException"
+        ) {
           return res.status(409).json({
             success: false,
             isDuplicate: true,
             message:
-              "A Notes/PYQ already exists for this institution, course, department, semester and year.",
+              "A Notes/PYQ already exists for this course, department, semester and year. Try a new one.",
           });
         }
 
@@ -569,14 +602,18 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
       }
 
       // =================================================
-      // 12. FILE EXTENSION
+      // 13. FILE EXTENSION
       // =================================================
 
       const fileExt =
-        req.file.originalname.split(".").pop()?.toLowerCase() || "pdf";
+        req.file.originalname
+          .split(".")
+          .pop()
+          ?.toLowerCase() || "pdf";
 
       // =================================================
-      // 13. S3 FILE KEY
+      // 14. S3 FILE KEY
+      // SAME STRUCTURE AS STUDENT API
       // =================================================
 
       fileKey =
@@ -584,79 +621,128 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
         `${noteId}.${fileExt}`;
 
       // =================================================
-      // 14. UPLOAD TO S3
+      // 15. UPLOAD TO S3
       // =================================================
 
       await s3.send(
         new PutObjectCommand({
-          Bucket: "presentme-document",
+          Bucket:
+            "presentme-document",
+
           Key: fileKey,
+
           Body: req.file.buffer,
-          ContentType: req.file.mimetype,
+
+          ContentType:
+            req.file.mimetype,
         })
       );
 
       s3Uploaded = true;
 
       // =================================================
-      // 15. FILE URL
+      // 16. FILE URL
       // =================================================
 
       const fileUrl =
         `https://presentme-document.s3.ap-south-1.amazonaws.com/${fileKey}`;
 
       // =================================================
-      // 16. CREATE NOTE ITEM
+      // 17. CREATE NOTE ITEM
+      // SAME STRUCTURE AS STUDENT API
       // =================================================
 
       const noteItem = {
+
+        // =================================================
+        // ID
+        // =================================================
+
         noteId,
 
-        // Duplicate system
+        // =================================================
+        // DUPLICATE
+        // =================================================
+
         duplicateKey,
+
         notesLookupKey,
 
-        // Institution
+        // =================================================
+        // INSTITUTION
+        // =================================================
+
         institutionId,
 
-        // Super Admin uploader
+        // =================================================
+        // UPLOADER
+        // ADMIN ID
+        // =================================================
+
         uploadedBy: uploaderId,
 
-        // Automatically approved
+        // =================================================
+        // ADMIN CONTENT IS APPROVED DIRECTLY
+        // =================================================
+
         status: "approved",
 
-        // Note information
+        // =================================================
+        // NOTE INFORMATION
+        // =================================================
+
         type,
+
         semester,
+
         year,
+
         course,
+
         department,
 
-        // Teacher only for Notes
+        // =================================================
+        // TEACHER NAME
+        // ONLY NOTES
+        // =================================================
+
         teacherName:
           type === "Notes"
             ? teacherName.trim()
             : null,
 
-        // File information
-        fileName: req.file.originalname,
+        // =================================================
+        // FILE
+        // =================================================
+
+        fileName:
+          req.file.originalname,
+
         fileUrl,
+
         fileKey,
 
-        // Downloads
+        // =================================================
+        // DOWNLOADS
+        // =================================================
+
         downloads: 0,
 
-        // Time
+        // =================================================
+        // CREATED
+        // =================================================
+
         createdAt,
       };
 
       // =================================================
-      // 17. SAVE TO NOTES TABLE
+      // 18. SAVE TO NOTES TABLE
       // =================================================
 
       await dynamo.send(
         new PutCommand({
           TableName: "notes",
+
           Item: noteItem,
         })
       );
@@ -664,7 +750,7 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
       noteCreated = true;
 
       // =================================================
-      // 18. UPDATE UNIQUE RESERVATION
+      // 19. UPDATE noteUnique
       // =================================================
 
       await dynamo.send(
@@ -689,10 +775,11 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
       );
 
       // =================================================
-      // 19. SUCCESS
+      // 20. SUCCESS
       // =================================================
 
       return res.status(201).json({
+
         success: true,
 
         message:
@@ -714,14 +801,16 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
 
         data: noteItem,
       });
+
     } catch (error) {
+
       console.error(
         "Super Admin Notes/PYQ upload error:",
         error
       );
 
       // =================================================
-      // CLEANUP S3
+      // 21. DELETE S3 FILE IF NOTES SAVE FAILED
       // =================================================
 
       if (
@@ -729,19 +818,25 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
         fileKey &&
         !noteCreated
       ) {
+
         try {
+
           await s3.send(
             new DeleteObjectCommand({
-              Bucket: "presentme-document",
+              Bucket:
+                "presentme-document",
+
               Key: fileKey,
             })
           );
 
           console.log(
-            "Orphaned S3 file deleted:",
+            "S3 cleanup successful:",
             fileKey
           );
+
         } catch (cleanupError) {
+
           console.error(
             "S3 cleanup failed:",
             cleanupError
@@ -750,7 +845,8 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
       }
 
       // =================================================
-      // CLEANUP UNIQUE RESERVATION
+      // 22. DELETE UNIQUE RESERVATION
+      // IF UPLOAD FAILED
       // =================================================
 
       if (
@@ -758,10 +854,13 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
         reservedDuplicateKey &&
         !noteCreated
       ) {
+
         try {
+
           await dynamo.send(
             new DeleteCommand({
-              TableName: "noteUnique",
+              TableName:
+                "noteUnique",
 
               Key: {
                 duplicateKey:
@@ -771,10 +870,12 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
           );
 
           console.log(
-            "Unique reservation deleted:",
+            "Unique reservation cleanup successful:",
             reservedDuplicateKey
           );
+
         } catch (cleanupError) {
+
           console.error(
             "Unique reservation cleanup failed:",
             cleanupError
@@ -783,12 +884,15 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
       }
 
       // =================================================
-      // PDF VALIDATION ERROR
+      // 23. PDF VALIDATION
       // =================================================
 
       if (
-        error.message?.includes("Only PDF")
+        error.message?.includes(
+          "Only PDF"
+        )
       ) {
+
         return res.status(400).json({
           success: false,
           message: error.message,
@@ -796,7 +900,7 @@ pyqNotesRouter.post( "/sadmin/pyq-notes/upload",
       }
 
       // =================================================
-      // GENERIC ERROR
+      // 24. GENERIC ERROR
       // =================================================
 
       return res.status(500).json({
