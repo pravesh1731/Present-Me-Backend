@@ -561,88 +561,138 @@ notesRouter.get("/students/notes", anyAuth, async (req, res) => {
     // from students / teachers
     // ─────────────────────────────────────
 
-    const notesWithUploaderName = await Promise.all(
-      notes.map(async (note) => {
-        if (!note.uploadedBy) {
-          return {
-            ...note,
-            uploadedByName: null,
-          };
-        }
+    // ─────────────────────────────────────
+// Get uploader firstName + lastName
+// from students / teachers / admin
+// ─────────────────────────────────────
 
-        try {
-          // ─────────────────────────
-          // Check students
-          // ─────────────────────────
+const notesWithUploaderName = await Promise.all(
+  notes.map(async (note) => {
+    if (!note.uploadedBy) {
+      return {
+        ...note,
+        uploadedByName: null,
+      };
+    }
 
-          const studentUploader = await dynamo.send(
-            new GetCommand({
-              TableName: "students",
+    try {
+      // ─────────────────────────
+      // 1. Check students
+      // ─────────────────────────
 
-              Key: {
-                studentId: note.uploadedBy,
-              },
-            }),
-          );
+      const studentUploader = await dynamo.send(
+        new GetCommand({
+          TableName: "students",
 
-          if (studentUploader.Item) {
-            const student = studentUploader.Item;
+          Key: {
+            studentId: note.uploadedBy,
+          },
+        }),
+      );
 
-            const uploadedByName = [student.firstName, student.lastName]
-              .filter(Boolean)
-              .join(" ");
+      if (studentUploader.Item) {
+        const student = studentUploader.Item;
 
-            return {
-              ...note,
-              uploadedByName: uploadedByName || "Unknown",
-            };
-          }
+        const uploadedByName = [
+          student.firstName,
+          student.lastName,
+        ]
+          .filter(Boolean)
+          .join(" ");
 
-          // ─────────────────────────
-          // If not student, check teacher
-          // ─────────────────────────
+        return {
+          ...note,
+          uploadedByName:
+            uploadedByName || "Unknown",
+        };
+      }
 
-          const teacherUploader = await dynamo.send(
-            new GetCommand({
-              TableName: "teachers",
+      // ─────────────────────────
+      // 2. If not student, check teacher
+      // ─────────────────────────
 
-              Key: {
-                teacherId: note.uploadedBy,
-              },
-            }),
-          );
+      const teacherUploader = await dynamo.send(
+        new GetCommand({
+          TableName: "teachers",
 
-          if (teacherUploader.Item) {
-            const teacher = teacherUploader.Item;
+          Key: {
+            teacherId: note.uploadedBy,
+          },
+        }),
+      );
 
-            const uploadedByName = [teacher.firstName, teacher.lastName]
-              .filter(Boolean)
-              .join(" ");
+      if (teacherUploader.Item) {
+        const teacher = teacherUploader.Item;
 
-            return {
-              ...note,
-              uploadedByName: uploadedByName || "Unknown",
-            };
-          }
+        const uploadedByName = [
+          teacher.firstName,
+          teacher.lastName,
+        ]
+          .filter(Boolean)
+          .join(" ");
 
-          // ─────────────────────────
-          // Uploader not found
-          // ─────────────────────────
+        return {
+          ...note,
+          uploadedByName:
+            uploadedByName || "Unknown",
+        };
+      }
 
-          return {
-            ...note,
-            uploadedByName: "Unknown",
-          };
-        } catch (userError) {
-          console.error("Failed to get uploader:", note.uploadedBy, userError);
+      // ─────────────────────────
+      // 3. If not teacher, check admin
+      // ─────────────────────────
 
-          return {
-            ...note,
-            uploadedByName: "Unknown",
-          };
-        }
-      }),
-    );
+      const adminUploader = await dynamo.send(
+        new GetCommand({
+          TableName: "admin",
+
+          Key: {
+            adminId: note.uploadedBy,
+          },
+        }),
+      );
+
+      if (adminUploader.Item) {
+        const admin = adminUploader.Item;
+
+        const uploadedByName = [
+          admin.firstName,
+          admin.lastName,
+        ]
+          .filter(Boolean)
+          .join(" ");
+
+        return {
+          ...note,
+          uploadedByName:
+            uploadedByName || "Admin",
+        };
+      }
+
+      // ─────────────────────────
+      // 4. Uploader not found
+      // ─────────────────────────
+
+      return {
+        ...note,
+        uploadedByName: "Unknown",
+      };
+
+    } catch (userError) {
+
+      console.error(
+        "Failed to get uploader:",
+        note.uploadedBy,
+        userError
+      );
+
+      return {
+        ...note,
+        uploadedByName: "Unknown",
+      };
+    }
+  }),
+);
 
     // ─────────────────────────────────────
     // Response
