@@ -61,11 +61,7 @@ const upload = multer({
 //  POST /students/notes/upload
 // ═══════════════════════════════════════════════════════════
 
-notesRouter.post(
-  "/students/notes/upload",
-  anyAuth,
-
-  (req, res, next) => {
+notesRouter.post("/students/notes/upload", anyAuth,(req, res, next) => {
     upload.single("file")(req, res, (err) => {
       if (err instanceof multer.MulterError) {
 
