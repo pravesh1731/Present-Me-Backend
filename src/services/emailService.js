@@ -1,12 +1,22 @@
 const nodemailer = require("nodemailer");
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host: "smtpout.secureserver.net",
+  port: 465,
+  secure: true,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASSWORD,
   },
 });
+
+// transporter.verify((error, success) => {
+//   if (error) {
+//     console.error("SMTP connection failed:", error);
+//   } else {
+//     console.log("SMTP server is ready");
+//   }
+// });
 
 async function sendVerificationEmail({
   email,
@@ -18,6 +28,7 @@ async function sendVerificationEmail({
   const mailOptions = {
     from: `"Present-Me" <${process.env.EMAIL_USER}>`,
     to: email,
+    replyTo: "admin@winntrix.com",
     subject: "Verify your email address",
     html: `
       <div style="font-family: Arial, sans-serif;">
