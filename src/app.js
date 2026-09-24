@@ -29,6 +29,7 @@ const adminDownloadAttendance = require("./routes/admin/attendance");
 const pyqNotesRouter = require("./routes/sAdmin/pyq_and_notes");
 const verifaliaRouter = require("./routes/verifaliaRouter");
 const ERouter = require("./routes/testEmail");
+const publicStats = require("./routes/public/stats");
 
 
 
@@ -82,6 +83,7 @@ app.use("/", adminDownloadAttendance);
 app.use("/", pyqNotesRouter);
 app.use("/", verifaliaRouter);
 app.use("/", ERouter);
+app.use("/", publicStats);
 
 
 
