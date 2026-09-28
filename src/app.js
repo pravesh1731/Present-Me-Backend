@@ -4,36 +4,11 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const cookieParser = require("cookie-parser");
 const path = require("path");
-
-
-const authRouter = require("./routes/admin/auth");
-const dashboardrouter = require("./routes/admin/dashboard");
-const sAdminRouter = require("./routes/sAdmin/sAdmin_institute");
-const sAdminAuth = require("./routes/sAdmin/SAuth");
-const studentAuth = require("./routes/student/studentAuth");
-const teacherAuth = require("./routes/teacher/teacherAuth");
-const studentProfile = require("./routes/student/studentProfile");
-const adminRouter = require("./routes/admin/updateTeacStatus");
-const teacherProfile = require("./routes/teacher/teacherProfile");
-const teacherClass = require("./routes/teacher/teacherCreateClass");
-const studentClass = require("./routes/student/studentClasses");
-const app = express();
 const cors = require("cors");
-const attendance = require("./routes/teacher/attendance");
-const notice = require("./routes/teacher/notice");
-const notesRouter = require("./routes/student/notes");
-const deleteRequests = require("./routes/common/delete_account");
-const teacher = require("./routes/admin/teachers");
-const adminStudentClass = require("./routes/admin/students");
-const adminDownloadAttendance = require("./routes/admin/attendance");
-const pyqNotesRouter = require("./routes/sAdmin/pyq_and_notes");
-const verifaliaRouter = require("./routes/verifaliaRouter");
-const ERouter = require("./routes/testEmail");
-const publicStats = require("./routes/public/stats");
 
+const routes = require("./routes");
 
-
-
+const app = express();
 
 // Middleware
 app.use(cors(
@@ -60,37 +35,8 @@ app.get("/.well-known/assetlinks.json", (req, res) => {
   );
 });
 
-
-
-app.use("/", authRouter);
-app.use("/", dashboardrouter);
-app.use("/", sAdminRouter);
-app.use("/", sAdminAuth);
-app.use("/", studentAuth);
-app.use("/", teacherAuth);
-app.use("/", studentProfile);
-app.use("/", adminRouter);
-app.use("/", teacherProfile);
-app.use("/", teacherClass);
-app.use("/", studentClass);
-app.use("/", attendance);
-app.use("/", notice);
-app.use("/", notesRouter);
-app.use("/", deleteRequests);
-app.use("/", teacher);
-app.use("/", adminStudentClass);
-app.use("/", adminDownloadAttendance);
-app.use("/", pyqNotesRouter);
-app.use("/", verifaliaRouter);
-app.use("/", ERouter);
-app.use("/", publicStats);
-
-
-
-
-
-// Mount routes
-// app.use('/api/institutions', institutionRoutes);
+// Mount routes (see routes/index.js)
+app.use("/", routes);
 
 // Example root
 app.get("/", (req, res) => res.send("Present-Me back running"));
