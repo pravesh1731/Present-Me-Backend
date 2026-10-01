@@ -12,6 +12,7 @@ const adminAttendanceRoutes = require("./admin/attendance.routes");
 const superAdminInstituteRoutes = require("./superAdmin/institute.routes");
 const superAdminAuthRoutes = require("./superAdmin/auth.routes");
 const superAdminPyqNotesRoutes = require("./superAdmin/pyqNotes.routes");
+const superAdminOverviewRoutes = require("./superAdmin/overview.routes");
 
 // Student
 const studentAuthRoutes = require("./student/auth.routes");
@@ -58,5 +59,6 @@ router.use("/", superAdminPyqNotesRoutes);
 router.use("/", verifaliaRoutes);
 router.use("/", testEmailRoutes);
 router.use("/", publicStatsRoutes);
+router.use("/", superAdminOverviewRoutes);
 
 module.exports = router;
