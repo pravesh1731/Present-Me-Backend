@@ -352,7 +352,59 @@ async function getPendingTeachers(institutionId) {
   return res.Items || [];
 }
 
+// Every teacher of an institution, whatever their status (super admin view).
+// A Scan returns at most 1 MB per call, so keep reading until the table is exhausted.
+async function getAllTeachersByInstitution(institutionId) {
+  const teachers = [];
+  let lastKey;
+
+  do {
+    const res = await docClient.send(
+      new ScanCommand({
+        TableName: TABLE_NAME,
+        FilterExpression: "institutionId = :institutionId",
+        ExpressionAttributeValues: {
+          ":institutionId": institutionId,
+        },
+        ExclusiveStartKey: lastKey,
+      })
+    );
+
+    teachers.push(...(res.Items || []));
+    lastKey = res.LastEvaluatedKey;
+  } while (lastKey);
+
+  return teachers;
+}
+
+// Every student of an institution (super admin view), paging through the index.
+async function getAllStudentsByInstitution(institutionId) {
+  const students = [];
+  let lastKey;
+
+  do {
+    const res = await docClient.send(
+      new QueryCommand({
+        TableName: "students",
+        IndexName: "institutionId-index",
+        KeyConditionExpression: "institutionId = :institutionId",
+        ExpressionAttributeValues: {
+          ":institutionId": institutionId,
+        },
+        ExclusiveStartKey: lastKey,
+      })
+    );
+
+    students.push(...(res.Items || []));
+    lastKey = res.LastEvaluatedKey;
+  } while (lastKey);
+
+  return students;
+}
+
 module.exports = {
+  getAllTeachersByInstitution,
+  getAllStudentsByInstitution,
   createTeacher,
   createClass,
   deleteClass,
