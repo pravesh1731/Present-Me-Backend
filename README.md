@@ -172,6 +172,11 @@ Every endpoint is mounted at the root; there is no `/api` prefix. **Auth** gives
 | GET    | `/sadmin/pendingInstitutes`               | Super admin | Institutions awaiting verification                                     | `superAdmin/institute`|
 | GET    | `/sadmin/verifiedInstitutes`              | Super admin | Verified institutions                                                  | `superAdmin/institute`|
 | PATCH  | `/sadmin/institutes/:institutionId/status`| Super admin | Verify/reject an institution (`{ status }`)                            | `superAdmin/institute`|
+| GET    | `/sadmin/institutes/:institutionId/teachers` | Super admin | Every teacher of an institution, any status (credential fields stripped) | `superAdmin/institute`|
+| GET    | `/sadmin/institutes/:institutionId/students` | Super admin | Every student of an institution (credential fields stripped)           | `superAdmin/institute`|
+| GET    | `/sadmin/overview`                        | Super admin | Dashboard counts, 6-month sign-up trend and latest activity (cached ~60s; `?refresh=1` to bypass) | `superAdmin/overview` |
+| GET    | `/sadmin/teachers`                        | Super admin | All teachers across institutes. Query: `page`, `pageSize` (≤100), `search`, `institutionId`, `status`, `sort` | `superAdmin/overview` |
+| GET    | `/sadmin/students`                        | Super admin | All students across institutes. Query: `page`, `pageSize` (≤100), `search`, `institutionId`, `verified`, `sort` | `superAdmin/overview` |
 | GET    | `/sadmin/pyq-notes`                       | Super admin | List uploaded notes/PYQs for review (paginated, filterable)            | `superAdmin/pyqNotes` |
 | POST   | `/sadmin/pyq-notes/upload`                | Super admin | Upload a note/PYQ (multipart `file`)                                   | `superAdmin/pyqNotes` |
 | POST   | `/sadmin/pyq-notes/:noteId/verify`        | Super admin | Approve a note and credit the uploader's wallet (`{ amount, description }`) | `superAdmin/pyqNotes` |
